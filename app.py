@@ -43,11 +43,14 @@ def dashboard():
         return redirect(url_for("login"))
 
     return f"""
-    <h2>Dashboard</h2>
-    <p>Usuario: {session['usuario']} ({session['rol']})</p>
-    <a href='/ventas'>Nueva venta</a><br><br>
-    <a href='/logout'>Cerrar sesión</a>
+        <h2>Bienvenido {session['usuario']}</h2>
+        <p>Rol: {session['rol']}</p>
+
+        <a href='/ventas'>🧾 Nueva venta</a><br><br>
+
+        <a href='/logout'>Cerrar sesión</a>
     """
+
 
 @app.route("/ventas", methods=["GET", "POST"])
 def ventas():
