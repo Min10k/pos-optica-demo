@@ -13,7 +13,6 @@ DATABASE_URL = os.environ.get("DATABASE_URL")
 def get_db():
     return psycopg.connect(DATABASE_URL)
 
-
 # ======================
 # USUARIOS DEMO
 # ======================
@@ -95,15 +94,12 @@ def abrir_caja():
         MONTO_INICIAL = float(request.form["monto"])
         CAJA_ABIERTA = True
 
-        conn = get_db()
-        cur = conn.cursor()
-        cur.execute(
-            "INSERT INTO caja (monto_inicial, total_ventas) VALUES (%s, %s)",
-            (MONTO_INICIAL, 0)
-        )
-        conn.commit()
-        cur.close()
-        conn.close()
+        with get_db() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO caja (monto_inicial, total_ventas) VALUES (%s, %s)",
+                    (MONTO_INICIAL, 0)
+                )
 
         return redirect(url_for("dashboard"))
 
@@ -130,15 +126,12 @@ def ventas():
         for p in seleccionados:
             total += PRODUCTOS[p]
 
-        conn = get_db()
-        cur = conn.cursor()
-        cur.execute(
-            "INSERT INTO ventas (usuario, total) VALUES (%s, %s)",
-            (session["usuario"], total)
-        )
-        conn.commit()
-        cur.close()
-        conn.close()
+        with get_db() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO ventas (usuario, total) VALUES (%s, %s)",
+                    (session["usuario"], total)
+                )
 
         return f"""
         <h2>Venta realizada</h2>
@@ -159,18 +152,20 @@ def ventas():
 def cerrar_caja():
     global CAJA_ABIERTA
 
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute("SELECT SUM(total) FROM ventas")
-    total = cur.fetchone()[0] or 0
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT COALESCE(SUM(total), 0) FROM ventas")
+            total = cur.fetchone()[0]
 
-    cur.execute(
-        "UPDATE caja SET total_ventas=%s ORDER BY id DESC LIMIT 1",
-        (total,)
-    )
-    conn.commit()
-    cur.close()
-    conn.close()
+            cur.execute("""
+                UPDATE caja
+                SET total_ventas = %s
+                WHERE id = (
+                    SELECT id FROM caja
+                    ORDER BY id DESC
+                    LIMIT 1
+                )
+            """, (total,))
 
     CAJA_ABIERTA = False
 
@@ -189,7 +184,7 @@ def logout():
     return redirect(url_for("login"))
 
 # ======================
-# 🔴 PASO 3 (ESTO ES LO IMPORTANTE)
+# RENDER
 # ======================
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
