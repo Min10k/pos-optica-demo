@@ -1,7 +1,17 @@
+import os
+import psycopg2
 from flask import Flask, request, redirect, url_for, session
 
 app = Flask(__name__)
 app.secret_key = "demo_pos_optica"
+
+# ======================
+# CONEXIÓN A BD (NEON)
+# ======================
+DATABASE_URL = os.environ.get("DATABASE_URL")
+
+def get_db():
+    return psycopg2.connect(DATABASE_URL)
 
 # ======================
 # USUARIOS DEMO
@@ -12,31 +22,19 @@ USUARIOS = {
 }
 
 # ======================
-# INVENTARIO DEMO
+# PRODUCTOS
 # ======================
 PRODUCTOS = {
-    "Armazón básico": {
-        "precio": 800,
-        "stock": 5
-    },
-    "Lentes monofocales": {
-        "precio": 1200,
-        "stock": 10
-    },
-    "Lentes antirreflejantes": {
-        "precio": 1600,
-        "stock": 8
-    }
+    "Armazón básico": 800,
+    "Lentes monofocales": 1200,
+    "Lentes antirreflejantes": 1600
 }
 
 # ======================
-# CAJA DEMO
+# CAJA (ESTADO)
 # ======================
-CAJA = {
-    "abierta": False,
-    "monto_inicial": 0,
-    "total_ventas": 0
-}
+CAJA_ABIERTA = False
+MONTO_INICIAL = 0
 
 # ======================
 # LOGIN
@@ -71,12 +69,12 @@ def dashboard():
     if "usuario" not in session:
         return redirect(url_for("login"))
 
-    estado_caja = "Abierta" if CAJA["abierta"] else "Cerrada"
+    estado = "Abierta" if CAJA_ABIERTA else "Cerrada"
 
     return f"""
     <h2>Bienvenido {session['usuario']}</h2>
     <p>Rol: {session['rol']}</p>
-    <p>Estado de caja: {estado_caja}</p>
+    <p>Estado de caja: {estado}</p>
 
     <a href="/abrir_caja">🔓 Abrir caja</a><br><br>
     <a href="/ventas">🧾 Nueva venta</a><br><br>
@@ -86,102 +84,99 @@ def dashboard():
     """
 
 # ======================
-# VENTAS + INVENTARIO
-# ======================
-@app.route("/ventas", methods=["GET", "POST"])
-def ventas():
-    if "usuario" not in session:
-        return redirect(url_for("login"))
-
-    if not CAJA["abierta"]:
-        return "Caja cerrada. Debe abrir caja antes de vender."
-
-    total = 0
-    detalle = ""
-    error = ""
-
-    if request.method == "POST":
-        seleccionados = request.form.getlist("producto")
-
-        for prod in seleccionados:
-            if PRODUCTOS[prod]["stock"] <= 0:
-                error = f"No hay stock disponible de {prod}"
-                break
-
-            PRODUCTOS[prod]["stock"] -= 1
-            precio = PRODUCTOS[prod]["precio"]
-            total += precio
-            detalle += f"<li>{prod} - ${precio}</li>"
-
-        if error:
-            return f"<h3 style='color:red'>{error}</h3><a href='/ventas'>Volver</a>"
-
-        CAJA["total_ventas"] += total
-
-        return f"""
-        <h2>Venta realizada</h2>
-        <ul>{detalle}</ul>
-        <h3>Total: ${total}</h3>
-        <a href="/dashboard">Volver</a>
-        """
-
-    checkboxes = ""
-    for p, data in PRODUCTOS.items():
-        checkboxes += f"""
-        <input type="checkbox" name="producto" value="{p}">
-        {p} - ${data['precio']} (Stock: {data['stock']})<br>
-        """
-
-    return f"""
-    <h2>Nueva venta</h2>
-    <form method="post">
-        {checkboxes}<br>
-        <button>Vender</button>
-    </form>
-    """
-
-# ======================
 # ABRIR CAJA
 # ======================
 @app.route("/abrir_caja", methods=["GET", "POST"])
 def abrir_caja():
-    if "usuario" not in session:
-        return redirect(url_for("login"))
+    global CAJA_ABIERTA, MONTO_INICIAL
 
     if request.method == "POST":
-        CAJA["abierta"] = True
-        CAJA["monto_inicial"] = float(request.form["monto"])
-        CAJA["total_ventas"] = 0
+        MONTO_INICIAL = float(request.form["monto"])
+        CAJA_ABIERTA = True
+
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO caja (monto_inicial, total_ventas) VALUES (%s, %s)",
+            (MONTO_INICIAL, 0)
+        )
+        conn.commit()
+        cur.close()
+        conn.close()
+
         return redirect(url_for("dashboard"))
 
     return """
     <h2>Abrir caja</h2>
     <form method="post">
-        <input name="monto" type="number" placeholder="Monto inicial" required>
-        <br><br>
-        <button>Abrir caja</button>
+        <input name="monto" type="number" required>
+        <button>Abrir</button>
     </form>
     """
+
+# ======================
+# VENTAS (GUARDA EN BD)
+# ======================
+@app.route("/ventas", methods=["GET", "POST"])
+def ventas():
+    if not CAJA_ABIERTA:
+        return "Caja cerrada"
+
+    if request.method == "POST":
+        total = 0
+        seleccionados = request.form.getlist("producto")
+
+        for p in seleccionados:
+            total += PRODUCTOS[p]
+
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO ventas (usuario, total) VALUES (%s, %s)",
+            (session["usuario"], total)
+        )
+        conn.commit()
+        cur.close()
+        conn.close()
+
+        return f"""
+        <h2>Venta realizada</h2>
+        <p>Total: ${total}</p>
+        <a href="/dashboard">Volver</a>
+        """
+
+    html = "<h2>Nueva venta</h2><form method='post'>"
+    for p, precio in PRODUCTOS.items():
+        html += f"<input type='checkbox' name='producto' value='{p}'> {p} - ${precio}<br>"
+    html += "<br><button>Vender</button></form>"
+
+    return html
 
 # ======================
 # CERRAR CAJA
 # ======================
 @app.route("/cerrar_caja")
 def cerrar_caja():
-    if "usuario" not in session:
-        return redirect(url_for("login"))
+    global CAJA_ABIERTA
 
-    if not CAJA["abierta"]:
-        return "La caja ya está cerrada"
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("SELECT SUM(total) FROM ventas")
+    total = cur.fetchone()[0] or 0
 
-    CAJA["abierta"] = False
-    total = CAJA["monto_inicial"] + CAJA["total_ventas"]
+    cur.execute(
+        "UPDATE caja SET total_ventas=%s ORDER BY id DESC LIMIT 1",
+        (total,)
+    )
+    conn.commit()
+    cur.close()
+    conn.close()
+
+    CAJA_ABIERTA = False
 
     return f"""
     <h2>Cierre de caja</h2>
-    <p>Monto inicial: ${CAJA['monto_inicial']}</p>
-    <p>Total ventas: ${CAJA['total_ventas']}</p>
-    <h3>Total en caja: ${total}</h3>
+    <p>Total ventas: ${total}</p>
     <a href="/dashboard">Volver</a>
     """
 
@@ -195,6 +190,5 @@ def logout():
 
 if __name__ == "__main__":
     app.run()
-
 
 
