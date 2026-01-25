@@ -55,8 +55,8 @@ def login():
     return """
     <h2>Login POS Óptica</h2>
     <form method="post">
-        <input name="usuario"><br><br>
-        <input name="password" type="password"><br><br>
+        <input name="usuario" placeholder="Usuario"><br><br>
+        <input name="password" type="password" placeholder="Contraseña"><br><br>
         <button>Entrar</button>
     </form>
     """
@@ -76,9 +76,10 @@ def dashboard():
     <p>Rol: {session['rol']}</p>
     <p>Estado de caja: {estado}</p>
 
-    <a href="/abrir_caja">Abrir caja</a><br><br>
-    <a href="/ventas">Nueva venta</a><br><br>
-    <a href="/cerrar_caja">Cerrar caja</a><br><br>
+    <a href="/abrir_caja">🔓 Abrir caja</a><br><br>
+    <a href="/ventas">🧾 Nueva venta</a><br><br>
+    <a href="/cerrar_caja">🔒 Cerrar caja</a><br><br>
+
     <a href="/logout">Cerrar sesión</a>
     """
 
@@ -149,7 +150,7 @@ def cerrar_caja():
 
     with get_db() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT COALESCE(SUM(total),0) FROM ventas")
+            cur.execute("SELECT COALESCE(SUM(total), 0) FROM ventas")
             total = cur.fetchone()[0]
 
             cur.execute(
@@ -174,7 +175,7 @@ def logout():
     return redirect(url_for("login"))
 
 # ======================
-# START (RENDER)
+# RENDER
 # ======================
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
