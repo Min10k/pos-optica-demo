@@ -3,19 +3,35 @@ from flask import Flask, request, redirect, url_for, session
 app = Flask(__name__)
 app.secret_key = "demo_pos_optica"
 
-# Usuarios demo
+# ======================
+# USUARIOS DEMO
+# ======================
 USUARIOS = {
     "admin": {"password": "admin123", "rol": "admin"},
     "caja": {"password": "caja123", "rol": "caja"}
 }
 
-# Productos demo
+# ======================
+# PRODUCTOS DEMO
+# ======================
 PRODUCTOS = {
     "Armazón básico": 800,
     "Lentes monofocales": 1200,
     "Lentes antirreflejantes": 1600
 }
 
+# ======================
+# CAJA DEMO
+# ======================
+CAJA = {
+    "abierta": False,
+    "monto_inicial": 0,
+    "total_ventas": 0
+}
+
+# ======================
+# LOGIN
+# ======================
 @app.route("/", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
@@ -26,6 +42,7 @@ def login():
             session["usuario"] = u
             session["rol"] = USUARIOS[u]["rol"]
             return redirect(url_for("dashboard"))
+
         return "Credenciales incorrectas"
 
     return """
@@ -37,46 +54,62 @@ def login():
     </form>
     """
 
+# ======================
+# DASHBOARD
+# ======================
 @app.route("/dashboard")
 def dashboard():
     if "usuario" not in session:
         return redirect(url_for("login"))
 
+    estado_caja = "Abierta" if CAJA["abierta"] else "Cerrada"
+
     return f"""
-        <h2>Bienvenido {session['usuario']}</h2>
-        <p>Rol: {session['rol']}</p>
+    <h2>Bienvenido {session['usuario']}</h2>
+    <p>Rol: {session['rol']}</p>
+    <p>Estado de caja: {estado_caja}</p>
 
-        <a href='/ventas'>🧾 Nueva venta</a><br><br>
+    <a href="/abrir_caja">🔓 Abrir caja</a><br><br>
+    <a href="/ventas">🧾 Nueva venta</a><br><br>
+    <a href="/cerrar_caja">🔒 Cerrar caja</a><br><br>
 
-        <a href='/logout'>Cerrar sesión</a>
+    <a href="/logout">Cerrar sesión</a>
     """
 
-
+# ======================
+# VENTAS
+# ======================
 @app.route("/ventas", methods=["GET", "POST"])
 def ventas():
     if "usuario" not in session:
         return redirect(url_for("login"))
+
+    if not CAJA["abierta"]:
+        return "Caja cerrada. Debe abrir caja antes de vender."
 
     total = 0
     detalle = ""
 
     if request.method == "POST":
         seleccionados = request.form.getlist("producto")
+
         for prod in seleccionados:
             total += PRODUCTOS[prod]
             detalle += f"<li>{prod} - ${PRODUCTOS[prod]}</li>"
+
+        CAJA["total_ventas"] += total
 
         return f"""
         <h2>Venta realizada</h2>
         <ul>{detalle}</ul>
         <h3>Total: ${total}</h3>
-        <a href='/dashboard'>Volver</a>
+        <a href="/dashboard">Volver</a>
         """
 
     checkboxes = ""
     for p, precio in PRODUCTOS.items():
         checkboxes += f"""
-        <input type='checkbox' name='producto' value='{p}'>
+        <input type="checkbox" name="producto" value="{p}">
         {p} - ${precio}<br>
         """
 
@@ -88,6 +121,54 @@ def ventas():
     </form>
     """
 
+# ======================
+# ABRIR CAJA
+# ======================
+@app.route("/abrir_caja", methods=["GET", "POST"])
+def abrir_caja():
+    if "usuario" not in session:
+        return redirect(url_for("login"))
+
+    if request.method == "POST":
+        CAJA["abierta"] = True
+        CAJA["monto_inicial"] = float(request.form["monto"])
+        CAJA["total_ventas"] = 0
+        return redirect(url_for("dashboard"))
+
+    return """
+    <h2>Abrir caja</h2>
+    <form method="post">
+        <input name="monto" type="number" placeholder="Monto inicial" required>
+        <br><br>
+        <button>Abrir caja</button>
+    </form>
+    """
+
+# ======================
+# CERRAR CAJA
+# ======================
+@app.route("/cerrar_caja")
+def cerrar_caja():
+    if "usuario" not in session:
+        return redirect(url_for("login"))
+
+    if not CAJA["abierta"]:
+        return "La caja ya está cerrada"
+
+    CAJA["abierta"] = False
+    total = CAJA["monto_inicial"] + CAJA["total_ventas"]
+
+    return f"""
+    <h2>Cierre de caja</h2>
+    <p>Monto inicial: ${CAJA['monto_inicial']}</p>
+    <p>Total ventas: ${CAJA['total_ventas']}</p>
+    <h3>Total en caja: ${total}</h3>
+    <a href="/dashboard">Volver</a>
+    """
+
+# ======================
+# LOGOUT
+# ======================
 @app.route("/logout")
 def logout():
     session.clear()
@@ -95,4 +176,5 @@ def logout():
 
 if __name__ == "__main__":
     app.run()
+
 
