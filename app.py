@@ -115,7 +115,7 @@ def abrir_caja():
     """
 
 # ======================
-# VENTAS (GUARDA EN BD)
+# VENTAS
 # ======================
 @app.route("/ventas", methods=["GET", "POST"])
 def ventas():
@@ -149,7 +149,6 @@ def ventas():
     for p, precio in PRODUCTOS.items():
         html += f"<input type='checkbox' name='producto' value='{p}'> {p} - ${precio}<br>"
     html += "<br><button>Vender</button></form>"
-
     return html
 
 # ======================
@@ -188,7 +187,9 @@ def logout():
     session.clear()
     return redirect(url_for("login"))
 
+# ======================
+# 🔴 PASO 3 (ESTO ES LO IMPORTANTE)
+# ======================
 if __name__ == "__main__":
-    app.run()
-
-
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
