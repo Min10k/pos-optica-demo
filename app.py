@@ -12,12 +12,21 @@ USUARIOS = {
 }
 
 # ======================
-# PRODUCTOS DEMO
+# INVENTARIO DEMO
 # ======================
 PRODUCTOS = {
-    "Armazón básico": 800,
-    "Lentes monofocales": 1200,
-    "Lentes antirreflejantes": 1600
+    "Armazón básico": {
+        "precio": 800,
+        "stock": 5
+    },
+    "Lentes monofocales": {
+        "precio": 1200,
+        "stock": 10
+    },
+    "Lentes antirreflejantes": {
+        "precio": 1600,
+        "stock": 8
+    }
 }
 
 # ======================
@@ -77,7 +86,7 @@ def dashboard():
     """
 
 # ======================
-# VENTAS
+# VENTAS + INVENTARIO
 # ======================
 @app.route("/ventas", methods=["GET", "POST"])
 def ventas():
@@ -89,13 +98,23 @@ def ventas():
 
     total = 0
     detalle = ""
+    error = ""
 
     if request.method == "POST":
         seleccionados = request.form.getlist("producto")
 
         for prod in seleccionados:
-            total += PRODUCTOS[prod]
-            detalle += f"<li>{prod} - ${PRODUCTOS[prod]}</li>"
+            if PRODUCTOS[prod]["stock"] <= 0:
+                error = f"No hay stock disponible de {prod}"
+                break
+
+            PRODUCTOS[prod]["stock"] -= 1
+            precio = PRODUCTOS[prod]["precio"]
+            total += precio
+            detalle += f"<li>{prod} - ${precio}</li>"
+
+        if error:
+            return f"<h3 style='color:red'>{error}</h3><a href='/ventas'>Volver</a>"
 
         CAJA["total_ventas"] += total
 
@@ -107,17 +126,17 @@ def ventas():
         """
 
     checkboxes = ""
-    for p, precio in PRODUCTOS.items():
+    for p, data in PRODUCTOS.items():
         checkboxes += f"""
         <input type="checkbox" name="producto" value="{p}">
-        {p} - ${precio}<br>
+        {p} - ${data['precio']} (Stock: {data['stock']})<br>
         """
 
     return f"""
     <h2>Nueva venta</h2>
     <form method="post">
         {checkboxes}<br>
-        <button>Calcular total</button>
+        <button>Vender</button>
     </form>
     """
 
@@ -176,5 +195,6 @@ def logout():
 
 if __name__ == "__main__":
     app.run()
+
 
 
