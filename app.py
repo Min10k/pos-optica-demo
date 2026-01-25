@@ -11,8 +11,7 @@ app.secret_key = "demo_pos_optica"
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
 def get_db():
-    # psycopg v3 correcto para Render + Neon
-    return psycopg.connect(DATABASE_URL, autocommit=True)
+    return psycopg.connect(DATABASE_URL)
 
 # ======================
 # USUARIOS DEMO
@@ -32,10 +31,9 @@ PRODUCTOS = {
 }
 
 # ======================
-# CAJA (ESTADO EN MEMORIA)
+# CAJA (ESTADO)
 # ======================
 CAJA_ABIERTA = False
-MONTO_INICIAL = 0
 
 # ======================
 # LOGIN
@@ -56,8 +54,8 @@ def login():
     return """
     <h2>Login POS Óptica</h2>
     <form method="post">
-        <input name="usuario" placeholder="Usuario" required><br><br>
-        <input name="password" type="password" placeholder="Contraseña" required><br><br>
+        <input name="usuario" placeholder="Usuario"><br><br>
+        <input name="password" type="password" placeholder="Contraseña"><br><br>
         <button>Entrar</button>
     </form>
     """
@@ -85,26 +83,23 @@ def dashboard():
     """
 
 # ======================
-# ABRIR CAJA
+# ABRIR CAJA (CORREGIDO)
 # ======================
 @app.route("/abrir_caja", methods=["GET", "POST"])
 def abrir_caja():
-    global CAJA_ABIERTA, MONTO_INICIAL
+    global CAJA_ABIERTA
 
     if request.method == "POST":
-        MONTO_INICIAL = float(request.form["monto"])
-        CAJA_ABIERTA = True
+        monto = float(request.form["monto"])
 
         with get_db() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    """
-                    INSERT INTO caja (monto_inicial, total_ventas)
-                    VALUES (%s, %s)
-                    """,
-                    (MONTO_INICIAL, 0)
+                    "INSERT INTO caja (monto_inicial, total_ventas) VALUES (%s, %s)",
+                    (monto, 0)
                 )
 
+        CAJA_ABIERTA = True
         return redirect(url_for("dashboard"))
 
     return """
@@ -120,26 +115,16 @@ def abrir_caja():
 # ======================
 @app.route("/ventas", methods=["GET", "POST"])
 def ventas():
-    if "usuario" not in session:
-        return redirect(url_for("login"))
-
     if not CAJA_ABIERTA:
-        return "<h3>Caja cerrada</h3><a href='/dashboard'>Volver</a>"
+        return "Caja cerrada"
 
     if request.method == "POST":
-        total = 0
-        seleccionados = request.form.getlist("producto")
-
-        for p in seleccionados:
-            total += PRODUCTOS[p]
+        total = sum(PRODUCTOS[p] for p in request.form.getlist("producto"))
 
         with get_db() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    """
-                    INSERT INTO ventas (usuario, total)
-                    VALUES (%s, %s)
-                    """,
+                    "INSERT INTO ventas (usuario, total) VALUES (%s, %s)",
                     (session["usuario"], total)
                 )
 
@@ -156,7 +141,7 @@ def ventas():
     return html
 
 # ======================
-# CERRAR CAJA
+# CERRAR CAJA (CORREGIDO)
 # ======================
 @app.route("/cerrar_caja")
 def cerrar_caja():
@@ -167,18 +152,11 @@ def cerrar_caja():
             cur.execute("SELECT COALESCE(SUM(total), 0) FROM ventas")
             total = cur.fetchone()[0]
 
-            cur.execute(
-                """
+            cur.execute("""
                 UPDATE caja
                 SET total_ventas = %s
-                WHERE id = (
-                    SELECT id FROM caja
-                    ORDER BY id DESC
-                    LIMIT 1
-                )
-                """,
-                (total,)
-            )
+                WHERE id = (SELECT id FROM caja ORDER BY id DESC LIMIT 1)
+            """, (total,))
 
     CAJA_ABIERTA = False
 
@@ -197,7 +175,7 @@ def logout():
     return redirect(url_for("login"))
 
 # ======================
-# MAIN (Render)
+# RENDER
 # ======================
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
