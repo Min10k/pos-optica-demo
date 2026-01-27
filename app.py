@@ -72,7 +72,14 @@ def dashboard():
     if "usuario" not in session:
         return redirect(url_for("login"))
 
-    estado = "Abierta" if hay_caja_abierta() else "Cerrada"
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("SELECT COUNT(*) FROM caja WHERE cerrada = FALSE")
+    abierta = cur.fetchone()[0] > 0
+    cur.close()
+    conn.close()
+
+    estado = "Abierta" if abierta else "Cerrada"
 
     return f"""
     <h2>Bienvenido {session['usuario']}</h2>
@@ -86,6 +93,7 @@ def dashboard():
     <a href="/logout">Cerrar sesión</a>
     """
 
+
 # ======================
 # ABRIR CAJA
 # ======================
@@ -94,19 +102,24 @@ def abrir_caja():
     if request.method == "POST":
         monto = float(request.form["monto"])
 
-        with get_db() as conn:
-            with conn.cursor() as cur:
-                # Verificar si ya hay caja abierta
-                cur.execute("SELECT id FROM caja WHERE cerrada = FALSE")
-                if cur.fetchone():
-                    return "<h3>Ya hay una caja abierta</h3><a href='/dashboard'>Volver</a>"
+        conn = get_db()
+        cur = conn.cursor()
 
-                # Abrir caja
-                cur.execute("""
-                    INSERT INTO caja (monto_inicial, total_ventas, cerrada)
-                    VALUES (%s, 0, FALSE)
-                """, (monto,))
-                conn.commit()
+        # Cerrar cualquier caja previa
+        cur.execute("UPDATE caja SET cerrada = TRUE WHERE cerrada = FALSE")
+
+        # Abrir nueva caja
+        cur.execute(
+            """
+            INSERT INTO caja (monto_inicial, total_ventas, cerrada)
+            VALUES (%s, 0, FALSE)
+            """,
+            (monto,)
+        )
+
+        conn.commit()
+        cur.close()
+        conn.close()
 
         return redirect(url_for("dashboard"))
 
@@ -117,6 +130,7 @@ def abrir_caja():
         <button>Abrir</button>
     </form>
     """
+
 
 # ======================
 # VENTAS
