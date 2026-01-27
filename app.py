@@ -136,7 +136,7 @@ def inventario():
     return html
 
 # ======================
-# VENTAS (con inventario)
+# VENTAS
 # ======================
 @app.route("/ventas", methods=["GET", "POST"])
 def ventas():
@@ -167,10 +167,7 @@ def ventas():
     if request.method == "POST":
         prod_id = int(request.form["producto"])
 
-        cur.execute(
-            "SELECT precio, stock FROM productos WHERE id = %s",
-            (prod_id,)
-        )
+        cur.execute("SELECT precio, stock FROM productos WHERE id = %s", (prod_id,))
         precio, stock = cur.fetchone()
 
         if stock <= 0:
@@ -178,21 +175,13 @@ def ventas():
             conn.close()
             return "Sin stock disponible"
 
-        # Guardar venta
         cur.execute("""
             INSERT INTO ventas (caja_id, total, usuario)
             VALUES (%s, %s, %s)
         """, (caja_id, precio, session["usuario"]))
 
-        # Restar stock
-        cur.execute("""
-            UPDATE productos SET stock = stock - 1 WHERE id = %s
-        """, (prod_id,))
-
-        # Sumar a caja
-        cur.execute("""
-            UPDATE caja SET total_ventas = total_ventas + %s WHERE id = %s
-        """, (precio, caja_id))
+        cur.execute("UPDATE productos SET stock = stock - 1 WHERE id = %s", (prod_id,))
+        cur.execute("UPDATE caja SET total_ventas = total_ventas + %s WHERE id = %s", (precio, caja_id)))
 
         conn.commit()
         cur.close()
@@ -246,7 +235,7 @@ def cerrar_caja():
     <p>Monto inicial: ${monto}</p>
     <p>Total ventas: ${ventas}</p>
     <p><b>Total en caja: ${total}</b></p>
-    <a href="/dashboard'>Volver</a>
+    <a href="/dashboard">Volver</a>
     """
 
 # ======================
