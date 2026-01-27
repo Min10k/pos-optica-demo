@@ -31,11 +31,6 @@ PRODUCTOS = {
 }
 
 # ======================
-# CAJA (ESTADO)
-# ======================
-CAJA_ABIERTA = False
-
-# ======================
 # LOGIN
 # ======================
 @app.route("/", methods=["GET", "POST"])
@@ -68,12 +63,9 @@ def dashboard():
     if "usuario" not in session:
         return redirect(url_for("login"))
 
-    estado = "Abierta" if CAJA_ABIERTA else "Cerrada"
-
     return f"""
     <h2>Bienvenido {session['usuario']}</h2>
     <p>Rol: {session['rol']}</p>
-    <p>Estado de caja: {estado}</p>
 
     <a href="/abrir_caja">🔓 Abrir caja</a><br><br>
     <a href="/ventas">🧾 Nueva venta</a><br><br>
@@ -83,29 +75,34 @@ def dashboard():
     """
 
 # ======================
-# ABRIR CAJA (CORREGIDO)
+# 🔓 ABRIR CAJA (FIX DEFINITIVO)
 # ======================
 @app.route("/abrir_caja", methods=["GET", "POST"])
 def abrir_caja():
-    global CAJA_ABIERTA
-
     if request.method == "POST":
-        monto = float(request.form["monto"])
+        try:
+            monto = float(request.form["monto"])
 
-        with get_db() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "INSERT INTO caja (monto_inicial, total_ventas) VALUES (%s, %s)",
-                    (monto, 0)
-                )
+            with get_db() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        INSERT INTO caja (monto_inicial, total_ventas)
+                        VALUES (%s, %s)
+                        """,
+                        (monto, 0)
+                    )
+                conn.commit()
 
-        CAJA_ABIERTA = True
-        return redirect(url_for("dashboard"))
+            return redirect(url_for("dashboard"))
+
+        except Exception as e:
+            return f"<h3>Error al abrir caja</h3><pre>{e}</pre>"
 
     return """
     <h2>Abrir caja</h2>
     <form method="post">
-        <input name="monto" type="number" required>
+        <input name="monto" type="number" step="0.01" required>
         <button>Abrir</button>
     </form>
     """
@@ -115,11 +112,12 @@ def abrir_caja():
 # ======================
 @app.route("/ventas", methods=["GET", "POST"])
 def ventas():
-    if not CAJA_ABIERTA:
-        return "Caja cerrada"
-
     if request.method == "POST":
-        total = sum(PRODUCTOS[p] for p in request.form.getlist("producto"))
+        total = 0
+        seleccionados = request.form.getlist("producto")
+
+        for p in seleccionados:
+            total += PRODUCTOS[p]
 
         with get_db() as conn:
             with conn.cursor() as cur:
@@ -127,6 +125,7 @@ def ventas():
                     "INSERT INTO ventas (usuario, total) VALUES (%s, %s)",
                     (session["usuario"], total)
                 )
+            conn.commit()
 
         return f"""
         <h2>Venta realizada</h2>
@@ -141,24 +140,24 @@ def ventas():
     return html
 
 # ======================
-# CERRAR CAJA (CORREGIDO)
+# CERRAR CAJA
 # ======================
 @app.route("/cerrar_caja")
 def cerrar_caja():
-    global CAJA_ABIERTA
-
     with get_db() as conn:
         with conn.cursor() as cur:
             cur.execute("SELECT COALESCE(SUM(total), 0) FROM ventas")
             total = cur.fetchone()[0]
 
-            cur.execute("""
+            cur.execute(
+                """
                 UPDATE caja
                 SET total_ventas = %s
-                WHERE id = (SELECT id FROM caja ORDER BY id DESC LIMIT 1)
-            """, (total,))
-
-    CAJA_ABIERTA = False
+                WHERE id = (SELECT id FROM caja ORDER BY fecha DESC LIMIT 1)
+                """,
+                (total,)
+            )
+        conn.commit()
 
     return f"""
     <h2>Cierre de caja</h2>
@@ -175,7 +174,7 @@ def logout():
     return redirect(url_for("login"))
 
 # ======================
-# RENDER
+# START (Render)
 # ======================
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
