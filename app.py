@@ -11,7 +11,7 @@ app.secret_key = "demo_pos_optica"
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
 def get_db():
-    return psycopg.connect(DATABASE_URL)
+    return psycopg.connect(DATABASE_URL, autocommit=True)
 
 # ======================
 # USUARIOS DEMO
@@ -29,15 +29,6 @@ PRODUCTOS = {
     "Lentes monofocales": 1200,
     "Lentes antirreflejantes": 1600
 }
-
-# ======================
-# UTILIDADES
-# ======================
-def hay_caja_abierta():
-    with get_db() as conn:
-        with conn.cursor() as cur:
-            cur.execute("SELECT id FROM caja WHERE cerrada = FALSE")
-            return cur.fetchone() is not None
 
 # ======================
 # LOGIN
@@ -74,12 +65,14 @@ def dashboard():
 
     conn = get_db()
     cur = conn.cursor()
-    cur.execute("SELECT COUNT(*) FROM caja WHERE cerrada = FALSE")
-    abierta = cur.fetchone()[0] > 0
+    cur.execute(
+        "SELECT id FROM caja WHERE cerrada = FALSE ORDER BY id DESC LIMIT 1"
+    )
+    caja = cur.fetchone()
     cur.close()
     conn.close()
 
-    estado = "Abierta" if abierta else "Cerrada"
+    estado = "Abierta" if caja else "Cerrada"
 
     return f"""
     <h2>Bienvenido {session['usuario']}</h2>
@@ -93,19 +86,21 @@ def dashboard():
     <a href="/logout">Cerrar sesión</a>
     """
 
-
 # ======================
 # ABRIR CAJA
 # ======================
 @app.route("/abrir_caja", methods=["GET", "POST"])
 def abrir_caja():
+    if "usuario" not in session:
+        return redirect(url_for("login"))
+
     if request.method == "POST":
         monto = float(request.form["monto"])
 
         conn = get_db()
         cur = conn.cursor()
 
-        # Cerrar cualquier caja previa
+        # Cerrar cualquier caja previa por seguridad
         cur.execute("UPDATE caja SET cerrada = TRUE WHERE cerrada = FALSE")
 
         # Abrir nueva caja
@@ -117,7 +112,6 @@ def abrir_caja():
             (monto,)
         )
 
-        conn.commit()
         cur.close()
         conn.close()
 
@@ -131,14 +125,29 @@ def abrir_caja():
     </form>
     """
 
-
 # ======================
 # VENTAS
 # ======================
 @app.route("/ventas", methods=["GET", "POST"])
 def ventas():
-    if not hay_caja_abierta():
-        return "<h3>No hay caja abierta</h3><a href='/dashboard'>Volver</a>"
+    if "usuario" not in session:
+        return redirect(url_for("login"))
+
+    conn = get_db()
+    cur = conn.cursor()
+
+    # Verificar caja abierta
+    cur.execute(
+        "SELECT id FROM caja WHERE cerrada = FALSE ORDER BY id DESC LIMIT 1"
+    )
+    caja = cur.fetchone()
+
+    if not caja:
+        cur.close()
+        conn.close()
+        return "Caja cerrada. Abre caja primero."
+
+    caja_id = caja[0]
 
     if request.method == "POST":
         total = 0
@@ -147,13 +156,20 @@ def ventas():
         for p in seleccionados:
             total += PRODUCTOS[p]
 
-        with get_db() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "INSERT INTO ventas (usuario, total) VALUES (%s, %s)",
-                    (session["usuario"], total)
-                )
-                conn.commit()
+        # Guardar venta
+        cur.execute(
+            "INSERT INTO ventas (usuario, total) VALUES (%s, %s)",
+            (session["usuario"], total)
+        )
+
+        # Actualizar total en caja
+        cur.execute(
+            "UPDATE caja SET total_ventas = total_ventas + %s WHERE id = %s",
+            (total, caja_id)
+        )
+
+        cur.close()
+        conn.close()
 
         return f"""
         <h2>Venta realizada</h2>
@@ -165,6 +181,9 @@ def ventas():
     for p, precio in PRODUCTOS.items():
         html += f"<input type='checkbox' name='producto' value='{p}'> {p} - ${precio}<br>"
     html += "<br><button>Vender</button></form>"
+
+    cur.close()
+    conn.close()
     return html
 
 # ======================
@@ -172,22 +191,31 @@ def ventas():
 # ======================
 @app.route("/cerrar_caja")
 def cerrar_caja():
-    with get_db() as conn:
-        with conn.cursor() as cur:
-            cur.execute("SELECT SUM(total) FROM ventas")
-            total = cur.fetchone()[0] or 0
+    if "usuario" not in session:
+        return redirect(url_for("login"))
 
-            cur.execute("""
-                UPDATE caja
-                SET total_ventas = %s, cerrada = TRUE
-                WHERE id = (
-                    SELECT id FROM caja
-                    WHERE cerrada = FALSE
-                    ORDER BY fecha DESC
-                    LIMIT 1
-                )
-            """, (total,))
-            conn.commit()
+    conn = get_db()
+    cur = conn.cursor()
+
+    cur.execute(
+        "SELECT id, total_ventas FROM caja WHERE cerrada = FALSE ORDER BY id DESC LIMIT 1"
+    )
+    caja = cur.fetchone()
+
+    if not caja:
+        cur.close()
+        conn.close()
+        return "No hay caja abierta"
+
+    caja_id, total = caja
+
+    cur.execute(
+        "UPDATE caja SET cerrada = TRUE WHERE id = %s",
+        (caja_id,)
+    )
+
+    cur.close()
+    conn.close()
 
     return f"""
     <h2>Cierre de caja</h2>
@@ -204,7 +232,7 @@ def logout():
     return redirect(url_for("login"))
 
 # ======================
-# START
+# START (RENDER)
 # ======================
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
