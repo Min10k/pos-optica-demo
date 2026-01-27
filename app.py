@@ -6,7 +6,7 @@ app = Flask(__name__)
 app.secret_key = "pos_optica_demo"
 
 # ======================
-# CONEXIÓN A BD (NEON)
+# CONEXIÓN BD (NEON)
 # ======================
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
@@ -27,12 +27,12 @@ USUARIOS = {
 @app.route("/", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
-        usuario = request.form["usuario"]
-        password = request.form["password"]
+        u = request.form["usuario"]
+        p = request.form["password"]
 
-        if usuario in USUARIOS and USUARIOS[usuario]["password"] == password:
-            session["usuario"] = usuario
-            session["rol"] = USUARIOS[usuario]["rol"]
+        if u in USUARIOS and USUARIOS[u]["password"] == p:
+            session["usuario"] = u
+            session["rol"] = USUARIOS[u]["rol"]
             return redirect(url_for("dashboard"))
 
         return "Credenciales incorrectas"
@@ -40,8 +40,8 @@ def login():
     return """
     <h2>Login POS Óptica</h2>
     <form method="post">
-        <input name="usuario" placeholder="Usuario" required><br><br>
-        <input name="password" type="password" placeholder="Contraseña" required><br><br>
+        <input name="usuario" required placeholder="Usuario"><br><br>
+        <input name="password" type="password" required placeholder="Contraseña"><br><br>
         <button>Entrar</button>
     </form>
     """
@@ -75,6 +75,7 @@ def dashboard():
 
     <a href="/abrir_caja">🔓 Abrir caja</a><br><br>
     <a href="/ventas">🧾 Nueva venta</a><br><br>
+    <a href="/inventario">📦 Inventario</a><br><br>
     <a href="/cerrar_caja">🔒 Cerrar caja</a><br><br>
     <a href="/logout">Cerrar sesión</a>
     """
@@ -93,18 +94,13 @@ def abrir_caja():
         conn = get_db()
         cur = conn.cursor()
 
-        # No permitir dos cajas abiertas
         cur.execute("SELECT id FROM caja WHERE cerrada = FALSE")
         if cur.fetchone():
             cur.close()
             conn.close()
             return "Ya hay una caja abierta"
 
-        cur.execute("""
-            INSERT INTO caja (monto_inicial)
-            VALUES (%s)
-        """, (monto,))
-
+        cur.execute("INSERT INTO caja (monto_inicial) VALUES (%s)", (monto,))
         conn.commit()
         cur.close()
         conn.close()
@@ -121,7 +117,26 @@ def abrir_caja():
     """
 
 # ======================
-# VENTAS
+# INVENTARIO
+# ======================
+@app.route("/inventario")
+def inventario():
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("SELECT nombre, precio, stock FROM productos ORDER BY nombre")
+    productos = cur.fetchall()
+    cur.close()
+    conn.close()
+
+    html = "<h2>Inventario</h2><table border='1'><tr><th>Producto</th><th>Precio</th><th>Stock</th></tr>"
+    for p in productos:
+        html += f"<tr><td>{p[0]}</td><td>${p[1]}</td><td>{p[2]}</td></tr>"
+    html += "</table><br><a href='/dashboard'>Volver</a>"
+
+    return html
+
+# ======================
+# VENTAS (con inventario)
 # ======================
 @app.route("/ventas", methods=["GET", "POST"])
 def ventas():
@@ -131,7 +146,6 @@ def ventas():
     conn = get_db()
     cur = conn.cursor()
 
-    # Buscar caja abierta
     cur.execute("""
         SELECT id FROM caja
         WHERE cerrada = FALSE
@@ -143,56 +157,63 @@ def ventas():
     if not caja:
         cur.close()
         conn.close()
-        return "<h3>No hay caja abierta</h3><a href='/dashboard'>Volver</a>"
+        return "Caja cerrada"
 
     caja_id = caja[0]
 
+    cur.execute("SELECT id, nombre, precio, stock FROM productos")
+    productos = cur.fetchall()
+
     if request.method == "POST":
-        total = float(request.form["total"])
+        prod_id = int(request.form["producto"])
+
+        cur.execute(
+            "SELECT precio, stock FROM productos WHERE id = %s",
+            (prod_id,)
+        )
+        precio, stock = cur.fetchone()
+
+        if stock <= 0:
+            cur.close()
+            conn.close()
+            return "Sin stock disponible"
 
         # Guardar venta
         cur.execute("""
             INSERT INTO ventas (caja_id, total, usuario)
             VALUES (%s, %s, %s)
-        """, (caja_id, total, session["usuario"]))
+        """, (caja_id, precio, session["usuario"]))
 
-        # Sumar venta a la caja
+        # Restar stock
         cur.execute("""
-            UPDATE caja
-            SET total_ventas = total_ventas + %s
-            WHERE id = %s
-        """, (total, caja_id))
+            UPDATE productos SET stock = stock - 1 WHERE id = %s
+        """, (prod_id,))
+
+        # Sumar a caja
+        cur.execute("""
+            UPDATE caja SET total_ventas = total_ventas + %s WHERE id = %s
+        """, (precio, caja_id))
 
         conn.commit()
         cur.close()
         conn.close()
 
-        return f"""
-        <h2>Venta registrada</h2>
-        <p>Total: ${total}</p>
-        <a href="/dashboard">Volver</a>
-        """
+        return redirect(url_for("ventas"))
+
+    html = "<h2>Nueva venta</h2><form method='post'>"
+    for p in productos:
+        html += f"<input type='radio' name='producto' value='{p[0]}' required> {p[1]} (${p[2]}) - Stock: {p[3]}<br>"
+    html += "<br><button>Vender</button></form><br><a href='/dashboard'>Volver</a>"
 
     cur.close()
     conn.close()
-
-    return """
-    <h2>Nueva venta</h2>
-    <form method="post">
-        <input name="total" type="number" step="0.01" required placeholder="Total de la venta">
-        <br><br>
-        <button>Registrar venta</button>
-    </form>
-    """
+    return html
 
 # ======================
 # CERRAR CAJA
 # ======================
 @app.route("/cerrar_caja")
 def cerrar_caja():
-    if "usuario" not in session:
-        return redirect(url_for("login"))
-
     conn = get_db()
     cur = conn.cursor()
 
@@ -217,13 +238,15 @@ def cerrar_caja():
     if not row:
         return "No hay caja abierta"
 
-    monto, total = row
+    monto, ventas = row
+    total = monto + ventas
 
     return f"""
-    <h2>Caja cerrada</h2>
+    <h2>Cierre de caja</h2>
     <p>Monto inicial: ${monto}</p>
-    <p>Total ventas: ${total}</p>
-    <a href="/dashboard">Volver</a>
+    <p>Total ventas: ${ventas}</p>
+    <p><b>Total en caja: ${total}</b></p>
+    <a href="/dashboard'>Volver</a>
     """
 
 # ======================
@@ -235,7 +258,7 @@ def logout():
     return redirect(url_for("login"))
 
 # ======================
-# START (RENDER)
+# START
 # ======================
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
