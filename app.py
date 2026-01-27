@@ -62,29 +62,14 @@ def dashboard():
     if "usuario" not in session:
         return redirect(url_for("login"))
 
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT id FROM caja
-        WHERE cerrada = FALSE
-        ORDER BY id DESC
-        LIMIT 1
-    """)
-    caja = cur.fetchone()
-    cur.close()
-    conn.close()
-
-    estado = "Abierta" if caja else "Cerrada"
-
-    return f"""
+    return """
     <h2>Dashboard POS Óptica</h2>
-    <p>Usuario: {session['usuario']} ({session['rol']})</p>
-    <p><b>Estado de caja:</b> {estado}</p>
 
     <a href="/abrir_caja">🔓 Abrir caja</a><br><br>
     <a href="/ventas">🧾 Nueva venta</a><br><br>
     <a href="/inventario">📦 Inventario</a><br><br>
     <a href="/clientes">👤 Clientes</a><br><br>
+    <a href="/reporte_ventas">📊 Ventas por día</a><br><br>
     <a href="/cerrar_caja">🔒 Cerrar caja</a><br><br>
     <a href="/logout">Cerrar sesión</a>
     """
@@ -94,19 +79,13 @@ def dashboard():
 # ======================
 @app.route("/abrir_caja", methods=["GET", "POST"])
 def abrir_caja():
-    if "usuario" not in session:
-        return redirect(url_for("login"))
-
     if request.method == "POST":
         monto = float(request.form["monto"])
-
         conn = get_db()
         cur = conn.cursor()
 
         cur.execute("SELECT id FROM caja WHERE cerrada = FALSE")
         if cur.fetchone():
-            cur.close()
-            conn.close()
             return "Ya hay una caja abierta"
 
         cur.execute("INSERT INTO caja (monto_inicial) VALUES (%s)", (monto,))
@@ -119,7 +98,7 @@ def abrir_caja():
     return """
     <h2>Abrir caja</h2>
     <form method="post">
-        <input name="monto" type="number" step="0.01" required placeholder="Monto inicial">
+        <input name="monto" type="number" step="0.01" required>
         <br><br>
         <button>Abrir</button>
     </form>
@@ -145,56 +124,35 @@ def inventario():
     return html
 
 # ======================
-# VENTAS (con stock)
+# VENTAS
 # ======================
 @app.route("/ventas", methods=["GET", "POST"])
 def ventas():
-    if "usuario" not in session:
-        return redirect(url_for("login"))
-
     conn = get_db()
     cur = conn.cursor()
 
-    cur.execute("""
-        SELECT id FROM caja
-        WHERE cerrada = FALSE
-        ORDER BY id DESC
-        LIMIT 1
-    """)
+    cur.execute("SELECT id FROM caja WHERE cerrada = FALSE ORDER BY id DESC LIMIT 1")
     caja = cur.fetchone()
-
     if not caja:
-        cur.close()
-        conn.close()
         return "Caja cerrada"
 
     caja_id = caja[0]
-
     cur.execute("SELECT id, nombre, precio, stock FROM productos")
     productos = cur.fetchall()
 
     if request.method == "POST":
         prod_id = int(request.form["producto"])
-
-        cur.execute("SELECT precio, stock FROM productos WHERE id = %s", (prod_id,))
+        cur.execute("SELECT precio, stock FROM productos WHERE id=%s", (prod_id,))
         precio, stock = cur.fetchone()
 
         if stock <= 0:
-            cur.close()
-            conn.close()
-            return "Sin stock disponible"
+            return "Sin stock"
 
-        cur.execute("""
-            INSERT INTO ventas (caja_id, total, usuario)
-            VALUES (%s, %s, %s)
-        """, (caja_id, precio, session["usuario"]))
-
-        cur.execute("UPDATE productos SET stock = stock - 1 WHERE id = %s", (prod_id,))
-        cur.execute("UPDATE caja SET total_ventas = total_ventas + %s WHERE id = %s", (precio, caja_id))
-
+        cur.execute("INSERT INTO ventas (caja_id, total, usuario) VALUES (%s,%s,%s)",
+                    (caja_id, precio, session["usuario"]))
+        cur.execute("UPDATE productos SET stock=stock-1 WHERE id=%s", (prod_id,))
+        cur.execute("UPDATE caja SET total_ventas=total_ventas+%s WHERE id=%s", (precio, caja_id))
         conn.commit()
-        cur.close()
-        conn.close()
 
         return redirect(url_for("ventas"))
 
@@ -208,7 +166,53 @@ def ventas():
     return html
 
 # ======================
-# CLIENTES
+# REPORTE DE VENTAS POR DÍA
+# ======================
+@app.route("/reporte_ventas", methods=["GET", "POST"])
+def reporte_ventas():
+    conn = get_db()
+    cur = conn.cursor()
+
+    fecha = request.form.get("fecha")
+
+    if fecha:
+        cur.execute("""
+            SELECT fecha::date, SUM(total)
+            FROM ventas
+            WHERE fecha::date = %s
+            GROUP BY fecha::date
+        """, (fecha,))
+    else:
+        cur.execute("""
+            SELECT fecha::date, SUM(total)
+            FROM ventas
+            GROUP BY fecha::date
+            ORDER BY fecha::date DESC
+        """)
+
+    ventas = cur.fetchall()
+    cur.close()
+    conn.close()
+
+    html = """
+    <h2>Ventas por día</h2>
+    <form method="post">
+        <input type="date" name="fecha">
+        <button>Filtrar</button>
+    </form>
+    <br>
+    <table border="1">
+        <tr><th>Fecha</th><th>Total vendido</th></tr>
+    """
+
+    for v in ventas:
+        html += f"<tr><td>{v[0]}</td><td>${v[1]}</td></tr>"
+
+    html += "</table><br><a href='/dashboard'>Volver</a>"
+    return html
+
+# ======================
+# CLIENTES + PDF
 # ======================
 @app.route("/clientes", methods=["GET", "POST"])
 def clientes():
@@ -219,11 +223,7 @@ def clientes():
         cur.execute("""
             INSERT INTO clientes (nombre, telefono, email)
             VALUES (%s, %s, %s)
-        """, (
-            request.form["nombre"],
-            request.form["telefono"],
-            request.form["email"]
-        ))
+        """, (request.form["nombre"], request.form["telefono"], request.form["email"]))
         conn.commit()
 
     cur.execute("SELECT id, nombre FROM clientes ORDER BY nombre")
@@ -231,78 +231,12 @@ def clientes():
     cur.close()
     conn.close()
 
-    html = """
-    <h2>Clientes</h2>
-    <form method="post">
-        <input name="nombre" required placeholder="Nombre"><br>
-        <input name="telefono" placeholder="Teléfono"><br>
-        <input name="email" placeholder="Email"><br><br>
-        <button>Agregar cliente</button>
-    </form>
-    <hr>
-    """
-
+    html = "<h2>Clientes</h2>"
     for c in clientes:
         html += f"<p>{c[1]} - <a href='/cliente/{c[0]}'>Ver</a></p>"
-
     html += "<br><a href='/dashboard'>Volver</a>"
     return html
 
-# ======================
-# CLIENTE + PDF
-# ======================
-@app.route("/cliente/<int:cliente_id>", methods=["GET", "POST"])
-def cliente(cliente_id):
-    conn = get_db()
-    cur = conn.cursor()
-
-    cur.execute("SELECT nombre FROM clientes WHERE id = %s", (cliente_id,))
-    cliente = cur.fetchone()
-
-    if not cliente:
-        return "Cliente no encontrado"
-
-    if request.method == "POST":
-        archivo = request.files["archivo"]
-        filename = secure_filename(archivo.filename)
-        path = os.path.join(app.config["UPLOAD_FOLDER"], filename)
-        archivo.save(path)
-
-        cur.execute("""
-            INSERT INTO documentos_cliente (cliente_id, nombre_archivo, ruta_archivo)
-            VALUES (%s, %s, %s)
-        """, (cliente_id, filename, path))
-        conn.commit()
-
-    cur.execute("""
-        SELECT nombre_archivo FROM documentos_cliente
-        WHERE cliente_id = %s
-    """, (cliente_id,))
-    docs = cur.fetchall()
-
-    cur.close()
-    conn.close()
-
-    html = f"<h2>Cliente: {cliente[0]}</h2>"
-    html += """
-    <form method="post" enctype="multipart/form-data">
-        <input type="file" name="archivo" accept="application/pdf" required>
-        <br><br>
-        <button>Subir PDF</button>
-    </form>
-    <hr>
-    <h3>Documentos</h3>
-    """
-
-    for d in docs:
-        html += f"<p>{d[0]} - <a href='/uploads/{d[0]}' target='_blank'>Ver / Descargar</a></p>"
-
-    html += "<br><a href='/clientes'>Volver</a>"
-    return html
-
-# ======================
-# VER / DESCARGAR PDF
-# ======================
 @app.route("/uploads/<filename>")
 def ver_pdf(filename):
     return send_from_directory(app.config["UPLOAD_FOLDER"], filename)
@@ -314,20 +248,11 @@ def ver_pdf(filename):
 def cerrar_caja():
     conn = get_db()
     cur = conn.cursor()
-
     cur.execute("""
-        UPDATE caja
-        SET cerrada = TRUE,
-            fecha_cierre = CURRENT_TIMESTAMP
-        WHERE id = (
-            SELECT id FROM caja
-            WHERE cerrada = FALSE
-            ORDER BY id DESC
-            LIMIT 1
-        )
+        UPDATE caja SET cerrada=TRUE, fecha_cierre=CURRENT_TIMESTAMP
+        WHERE id=(SELECT id FROM caja WHERE cerrada=FALSE ORDER BY id DESC LIMIT 1)
         RETURNING monto_inicial, total_ventas
     """)
-
     row = cur.fetchone()
     conn.commit()
     cur.close()
@@ -337,13 +262,11 @@ def cerrar_caja():
         return "No hay caja abierta"
 
     monto, ventas = row
-    total = monto + ventas
-
     return f"""
     <h2>Cierre de caja</h2>
     <p>Monto inicial: ${monto}</p>
     <p>Total ventas: ${ventas}</p>
-    <p><b>Total en caja: ${total}</b></p>
+    <p><b>Total en caja: ${monto + ventas}</b></p>
     <a href="/dashboard">Volver</a>
     """
 
