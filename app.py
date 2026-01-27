@@ -1,12 +1,17 @@
 import os
 import psycopg
-from flask import Flask, request, redirect, url_for, session
+from flask import Flask, request, redirect, url_for, session, send_from_directory
+from werkzeug.utils import secure_filename
 
 app = Flask(__name__)
 app.secret_key = "pos_optica_demo"
 
+UPLOAD_FOLDER = "uploads"
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
+
 # ======================
-# CONEXIÓN BD (NEON)
+# CONEXIÓN BD
 # ======================
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
@@ -32,7 +37,6 @@ def login():
 
         if u in USUARIOS and USUARIOS[u]["password"] == p:
             session["usuario"] = u
-            session["rol"] = USUARIOS[u]["rol"]
             return redirect(url_for("dashboard"))
 
         return "Credenciales incorrectas"
@@ -54,189 +58,125 @@ def dashboard():
     if "usuario" not in session:
         return redirect(url_for("login"))
 
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT id FROM caja
-        WHERE cerrada = FALSE
-        ORDER BY id DESC
-        LIMIT 1
-    """)
-    caja = cur.fetchone()
-    cur.close()
-    conn.close()
-
-    estado = "Abierta" if caja else "Cerrada"
-
-    return f"""
+    return """
     <h2>Dashboard POS Óptica</h2>
-    <p>Usuario: {session['usuario']} ({session['rol']})</p>
-    <p><b>Estado de caja:</b> {estado}</p>
 
     <a href="/abrir_caja">🔓 Abrir caja</a><br><br>
-    <a href="/ventas">🧾 Nueva venta</a><br><br>
+    <a href="/ventas">🧾 Ventas</a><br><br>
     <a href="/inventario">📦 Inventario</a><br><br>
+    <a href="/clientes">👤 Clientes</a><br><br>
     <a href="/cerrar_caja">🔒 Cerrar caja</a><br><br>
     <a href="/logout">Cerrar sesión</a>
     """
 
 # ======================
-# ABRIR CAJA
+# CLIENTES
 # ======================
-@app.route("/abrir_caja", methods=["GET", "POST"])
-def abrir_caja():
-    if "usuario" not in session:
-        return redirect(url_for("login"))
-
-    if request.method == "POST":
-        monto = float(request.form["monto"])
-
-        conn = get_db()
-        cur = conn.cursor()
-
-        cur.execute("SELECT id FROM caja WHERE cerrada = FALSE")
-        if cur.fetchone():
-            cur.close()
-            conn.close()
-            return "Ya hay una caja abierta"
-
-        cur.execute("INSERT INTO caja (monto_inicial) VALUES (%s)", (monto,))
-        conn.commit()
-        cur.close()
-        conn.close()
-
-        return redirect(url_for("dashboard"))
-
-    return """
-    <h2>Abrir caja</h2>
-    <form method="post">
-        <input name="monto" type="number" step="0.01" required placeholder="Monto inicial">
-        <br><br>
-        <button>Abrir</button>
-    </form>
-    """
-
-# ======================
-# INVENTARIO
-# ======================
-@app.route("/inventario")
-def inventario():
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute("SELECT nombre, precio, stock FROM productos ORDER BY nombre")
-    productos = cur.fetchall()
-    cur.close()
-    conn.close()
-
-    html = "<h2>Inventario</h2><table border='1'><tr><th>Producto</th><th>Precio</th><th>Stock</th></tr>"
-    for p in productos:
-        html += f"<tr><td>{p[0]}</td><td>${p[1]}</td><td>{p[2]}</td></tr>"
-    html += "</table><br><a href='/dashboard'>Volver</a>"
-
-    return html
-
-# ======================
-# VENTAS
-# ======================
-@app.route("/ventas", methods=["GET", "POST"])
-def ventas():
+@app.route("/clientes", methods=["GET", "POST"])
+def clientes():
     if "usuario" not in session:
         return redirect(url_for("login"))
 
     conn = get_db()
     cur = conn.cursor()
 
-    cur.execute("""
-        SELECT id FROM caja
-        WHERE cerrada = FALSE
-        ORDER BY id DESC
-        LIMIT 1
-    """)
-    caja = cur.fetchone()
-
-    if not caja:
-        cur.close()
-        conn.close()
-        return "Caja cerrada"
-
-    caja_id = caja[0]
-
-    cur.execute("SELECT id, nombre, precio, stock FROM productos")
-    productos = cur.fetchall()
-
     if request.method == "POST":
-        prod_id = int(request.form["producto"])
-
-        cur.execute("SELECT precio, stock FROM productos WHERE id = %s", (prod_id,))
-        precio, stock = cur.fetchone()
-
-        if stock <= 0:
-            cur.close()
-            conn.close()
-            return "Sin stock disponible"
+        nombre = request.form["nombre"]
+        telefono = request.form["telefono"]
+        email = request.form["email"]
 
         cur.execute("""
-            INSERT INTO ventas (caja_id, total, usuario)
+            INSERT INTO clientes (nombre, telefono, email)
             VALUES (%s, %s, %s)
-        """, (caja_id, precio, session["usuario"]))
-
-        cur.execute("UPDATE productos SET stock = stock - 1 WHERE id = %s", (prod_id,))
-        cur.execute("UPDATE caja SET total_ventas = total_ventas + %s WHERE id = %s", (precio, caja_id)))
-
+        """, (nombre, telefono, email))
         conn.commit()
-        cur.close()
-        conn.close()
 
-        return redirect(url_for("ventas"))
-
-    html = "<h2>Nueva venta</h2><form method='post'>"
-    for p in productos:
-        html += f"<input type='radio' name='producto' value='{p[0]}' required> {p[1]} (${p[2]}) - Stock: {p[3]}<br>"
-    html += "<br><button>Vender</button></form><br><a href='/dashboard'>Volver</a>"
+    cur.execute("SELECT id, nombre, telefono, email FROM clientes ORDER BY nombre")
+    clientes = cur.fetchall()
 
     cur.close()
     conn.close()
+
+    html = """
+    <h2>Clientes</h2>
+    <form method="post">
+        <input name="nombre" required placeholder="Nombre"><br>
+        <input name="telefono" placeholder="Teléfono"><br>
+        <input name="email" placeholder="Email"><br><br>
+        <button>Agregar cliente</button>
+    </form>
+    <hr>
+    """
+
+    for c in clientes:
+        html += f"""
+        <p>
+            <b>{c[1]}</b> ({c[2] or ''})
+            <br>
+            <a href="/cliente/{c[0]}">Ver cliente</a>
+        </p>
+        """
+
+    html += "<br><a href='/dashboard'>Volver</a>"
     return html
 
 # ======================
-# CERRAR CAJA
+# CLIENTE + DOCUMENTOS
 # ======================
-@app.route("/cerrar_caja")
-def cerrar_caja():
+@app.route("/cliente/<int:cliente_id>", methods=["GET", "POST"])
+def cliente(cliente_id):
+    if "usuario" not in session:
+        return redirect(url_for("login"))
+
     conn = get_db()
     cur = conn.cursor()
 
-    cur.execute("""
-        UPDATE caja
-        SET cerrada = TRUE,
-            fecha_cierre = CURRENT_TIMESTAMP
-        WHERE id = (
-            SELECT id FROM caja
-            WHERE cerrada = FALSE
-            ORDER BY id DESC
-            LIMIT 1
-        )
-        RETURNING monto_inicial, total_ventas
-    """)
+    cur.execute("SELECT nombre FROM clientes WHERE id = %s", (cliente_id,))
+    cliente = cur.fetchone()
 
-    row = cur.fetchone()
-    conn.commit()
+    if not cliente:
+        cur.close()
+        conn.close()
+        return "Cliente no encontrado"
+
+    if request.method == "POST":
+        archivo = request.files["archivo"]
+        if archivo:
+            filename = secure_filename(archivo.filename)
+            path = os.path.join(app.config["UPLOAD_FOLDER"], filename)
+            archivo.save(path)
+
+            cur.execute("""
+                INSERT INTO documentos_cliente (cliente_id, nombre_archivo, ruta_archivo)
+                VALUES (%s, %s, %s)
+            """, (cliente_id, filename, path))
+            conn.commit()
+
+    cur.execute("""
+        SELECT nombre_archivo FROM documentos_cliente
+        WHERE cliente_id = %s
+    """, (cliente_id,))
+    docs = cur.fetchall()
+
     cur.close()
     conn.close()
 
-    if not row:
-        return "No hay caja abierta"
-
-    monto, ventas = row
-    total = monto + ventas
-
-    return f"""
-    <h2>Cierre de caja</h2>
-    <p>Monto inicial: ${monto}</p>
-    <p>Total ventas: ${ventas}</p>
-    <p><b>Total en caja: ${total}</b></p>
-    <a href="/dashboard">Volver</a>
+    html = f"<h2>Cliente: {cliente[0]}</h2>"
+    html += """
+    <form method="post" enctype="multipart/form-data">
+        <input type="file" name="archivo" accept="application/pdf" required>
+        <br><br>
+        <button>Subir PDF</button>
+    </form>
+    <hr>
+    <h3>Documentos</h3>
     """
+
+    for d in docs:
+        html += f"<p>{d[0]}</p>"
+
+    html += "<br><a href='/clientes'>Volver</a>"
+    return html
 
 # ======================
 # LOGOUT
