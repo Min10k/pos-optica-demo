@@ -6,7 +6,7 @@ app = Flask(__name__)
 app.secret_key = "pos_optica_demo"
 
 # ======================
-# CONEXIÓN BD (NEON)
+# CONEXIÓN A BD (NEON)
 # ======================
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
@@ -27,12 +27,12 @@ USUARIOS = {
 @app.route("/", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
-        user = request.form["usuario"]
-        pwd = request.form["password"]
+        usuario = request.form["usuario"]
+        password = request.form["password"]
 
-        if user in USUARIOS and USUARIOS[user]["password"] == pwd:
-            session["usuario"] = user
-            session["rol"] = USUARIOS[user]["rol"]
+        if usuario in USUARIOS and USUARIOS[usuario]["password"] == password:
+            session["usuario"] = usuario
+            session["rol"] = USUARIOS[usuario]["rol"]
             return redirect(url_for("dashboard"))
 
         return "Credenciales incorrectas"
@@ -71,9 +71,10 @@ def dashboard():
     return f"""
     <h2>Dashboard POS Óptica</h2>
     <p>Usuario: {session['usuario']} ({session['rol']})</p>
-    <p><b>Caja:</b> {estado}</p>
+    <p><b>Estado de caja:</b> {estado}</p>
 
     <a href="/abrir_caja">🔓 Abrir caja</a><br><br>
+    <a href="/ventas">🧾 Nueva venta</a><br><br>
     <a href="/cerrar_caja">🔒 Cerrar caja</a><br><br>
     <a href="/logout">Cerrar sesión</a>
     """
@@ -92,7 +93,7 @@ def abrir_caja():
         conn = get_db()
         cur = conn.cursor()
 
-        # Evitar dos cajas abiertas
+        # No permitir dos cajas abiertas
         cur.execute("SELECT id FROM caja WHERE cerrada = FALSE")
         if cur.fetchone():
             cur.close()
@@ -116,6 +117,71 @@ def abrir_caja():
         <input name="monto" type="number" step="0.01" required placeholder="Monto inicial">
         <br><br>
         <button>Abrir</button>
+    </form>
+    """
+
+# ======================
+# VENTAS
+# ======================
+@app.route("/ventas", methods=["GET", "POST"])
+def ventas():
+    if "usuario" not in session:
+        return redirect(url_for("login"))
+
+    conn = get_db()
+    cur = conn.cursor()
+
+    # Buscar caja abierta
+    cur.execute("""
+        SELECT id FROM caja
+        WHERE cerrada = FALSE
+        ORDER BY id DESC
+        LIMIT 1
+    """)
+    caja = cur.fetchone()
+
+    if not caja:
+        cur.close()
+        conn.close()
+        return "<h3>No hay caja abierta</h3><a href='/dashboard'>Volver</a>"
+
+    caja_id = caja[0]
+
+    if request.method == "POST":
+        total = float(request.form["total"])
+
+        # Guardar venta
+        cur.execute("""
+            INSERT INTO ventas (caja_id, total, usuario)
+            VALUES (%s, %s, %s)
+        """, (caja_id, total, session["usuario"]))
+
+        # Sumar venta a la caja
+        cur.execute("""
+            UPDATE caja
+            SET total_ventas = total_ventas + %s
+            WHERE id = %s
+        """, (total, caja_id))
+
+        conn.commit()
+        cur.close()
+        conn.close()
+
+        return f"""
+        <h2>Venta registrada</h2>
+        <p>Total: ${total}</p>
+        <a href="/dashboard">Volver</a>
+        """
+
+    cur.close()
+    conn.close()
+
+    return """
+    <h2>Nueva venta</h2>
+    <form method="post">
+        <input name="total" type="number" step="0.01" required placeholder="Total de la venta">
+        <br><br>
+        <button>Registrar venta</button>
     </form>
     """
 
