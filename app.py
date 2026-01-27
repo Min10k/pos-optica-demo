@@ -124,8 +124,13 @@ def abrir_caja():
 # ======================
 @app.route("/ventas", methods=["GET", "POST"])
 def ventas():
+    if not CAJA_ABIERTA:
+        return "Caja cerrada"
+
     conn = get_db()
     cur = conn.cursor()
+
+    # obtener caja abierta
     cur.execute("""
         SELECT id FROM caja
         WHERE cerrada = FALSE
@@ -137,7 +142,9 @@ def ventas():
     if not caja:
         cur.close()
         conn.close()
-        return "Caja cerrada"
+        return "No hay caja abierta"
+
+    caja_id = caja[0]
 
     if request.method == "POST":
         total = 0
@@ -146,16 +153,17 @@ def ventas():
         for p in seleccionados:
             total += PRODUCTOS[p]
 
-        cur.execute("""
-            INSERT INTO ventas (usuario, total)
-            VALUES (%s, %s)
-        """, (session["usuario"], total))
+        # guardar venta con caja_id
+        cur.execute(
+            "INSERT INTO ventas (usuario, total, caja_id) VALUES (%s, %s, %s)",
+            (session["usuario"], total, caja_id)
+        )
 
-        cur.execute("""
-            UPDATE caja
-            SET total_ventas = total_ventas + %s
-            WHERE id = %s
-        """, (total, caja[0]))
+        # sumar venta a la caja
+        cur.execute(
+            "UPDATE caja SET total_ventas = total_ventas + %s WHERE id = %s",
+            (total, caja_id)
+        )
 
         conn.commit()
         cur.close()
@@ -172,6 +180,7 @@ def ventas():
         html += f"<input type='checkbox' name='producto' value='{p}'> {p} - ${precio}<br>"
     html += "<br><button>Vender</button></form>"
     return html
+
 
 # ======================
 # CERRAR CAJA
