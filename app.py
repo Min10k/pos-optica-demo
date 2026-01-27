@@ -11,7 +11,11 @@ app.secret_key = "demo_pos_optica"
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
 def get_db():
-    return psycopg.connect(DATABASE_URL)
+    return psycopg.connect(
+        DATABASE_URL,
+        sslmode="require"
+    )
+
 
 # ======================
 # USUARIOS DEMO
