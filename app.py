@@ -9,25 +9,22 @@ DATABASE_URL = os.environ.get("DATABASE_URL")
 
 def get_db():
     if not DATABASE_URL:
-        raise Exception("DATABASE_URL no está definida")
+        raise Exception("DATABASE_URL no está configurada")
     return psycopg.connect(DATABASE_URL)
 
 # ======================
-# USUARIOS DEMO
+# LOGIN DEMO
 # ======================
 USUARIOS = {
     "admin": {"password": "admin123", "rol": "admin"},
     "caja": {"password": "caja123", "rol": "caja"}
 }
 
-# ======================
-# LOGIN
-# ======================
 @app.route("/", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
-        u = request.form.get("usuario")
-        p = request.form.get("password")
+        u = request.form["usuario"]
+        p = request.form["password"]
 
         if u in USUARIOS and USUARIOS[u]["password"] == p:
             session["usuario"] = u
@@ -39,8 +36,8 @@ def login():
     return """
     <h2>Login POS Óptica</h2>
     <form method="post">
-        <input name="usuario" required><br><br>
-        <input name="password" type="password" required><br><br>
+        <input name="usuario" placeholder="Usuario" required><br><br>
+        <input name="password" type="password" placeholder="Contraseña" required><br><br>
         <button>Entrar</button>
     </form>
     """
@@ -72,16 +69,12 @@ def dashboard():
     <p><b>Usuario:</b> {session['usuario']}</p>
     <p><b>Estado:</b> {estado}</p>
     <hr>
-    <a href="/abrir_caja">Abrir caja</a><br><br>
-    <a href="/ventas">Nueva venta</a><br><br>
-    <a href="/inventario">Inventario</a><br><br>
-    <a href="/clientes">Clientes</a><br><br>
-    <a href="/cerrar_caja">Cerrar caja</a><br><br>
+    <a href="/clientes">👤 Clientes</a><br><br>
     <a href="/logout">Cerrar sesión</a>
     """
 
 # ======================
-# CLIENTES
+# CLIENTES (A)
 # ======================
 @app.route("/clientes")
 def clientes():
@@ -96,34 +89,17 @@ def clientes():
             FROM clientes
             ORDER BY nombre
         """)
-        data = cur.fetchall()
+        clientes = cur.fetchall()
         cur.close()
         conn.close()
     except Exception as e:
         return f"Error al cargar clientes: {e}"
 
     html = "<h2>Clientes</h2><ul>"
-    for c in data:
+    for c in clientes:
         html += f"<li>{c[1]} - {c[2]} - {c[3]}</li>"
-    html += "</ul><a href='/dashboard'>Volver</a>"
-    return html
+    html += "</ul><br><a href='/dashboard'>Volver</a>"
 
-# ======================
-# INVENTARIO
-# ======================
-@app.route("/inventario")
-def inventario():
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute("SELECT nombre, precio, stock FROM productos ORDER BY nombre")
-    productos = cur.fetchall()
-    cur.close()
-    conn.close()
-
-    html = "<h2>Inventario</h2><ul>"
-    for p in productos:
-        html += f"<li>{p[0]} - ${p[1]} | Stock: {p[2]}</li>"
-    html += "</ul><a href='/dashboard'>Volver</a>"
     return html
 
 # ======================
