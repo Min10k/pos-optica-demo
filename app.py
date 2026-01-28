@@ -5,10 +5,16 @@ from flask import Flask, request, redirect, url_for, session
 app = Flask(__name__)
 app.secret_key = "demo_pos_optica"
 
+# ======================
+# CONEXIÓN A BD (NEON)
+# ======================
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
 def get_db():
-    return psycopg.connect(DATABASE_URL)
+    return psycopg.connect(
+        DATABASE_URL,
+        sslmode="require"
+    )
 
 # ======================
 # LOGIN DEMO
@@ -37,8 +43,8 @@ def login():
     return """
     <h2>Login POS Óptica</h2>
     <form method="post">
-        <input name="usuario" placeholder="Usuario"><br><br>
-        <input name="password" type="password" placeholder="Contraseña"><br><br>
+        <input name="usuario" placeholder="Usuario" required><br><br>
+        <input name="password" type="password" placeholder="Contraseña" required><br><br>
         <button>Entrar</button>
     </form>
     """
@@ -51,17 +57,26 @@ def dashboard():
     if "usuario" not in session:
         return redirect(url_for("login"))
 
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute("SELECT id FROM caja WHERE cerrada = FALSE ORDER BY fecha_apertura DESC LIMIT 1")
-    caja = cur.fetchone()
-    cur.close()
-    conn.close()
+    estado_caja = "🔴 Caja CERRADA"
 
-    if caja:
-        estado_caja = f"🟢 Caja ABIERTA (ID {caja[0]})"
-    else:
-        estado_caja = "🔴 Caja CERRADA"
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT id 
+            FROM caja 
+            WHERE cerrada = FALSE 
+            ORDER BY fecha_apertura DESC 
+            LIMIT 1
+        """)
+        caja = cur.fetchone()
+        cur.close()
+        conn.close()
+
+        if caja:
+            estado_caja = f"🟢 Caja ABIERTA (ID {caja[0]})"
+    except Exception as e:
+        estado_caja = "⚠️ Error al consultar estado de caja"
 
     return f"""
     <h1>Dashboard POS Óptica</h1>
@@ -99,6 +114,7 @@ def abrir_caja():
             "INSERT INTO caja (monto_inicial) VALUES (%s)",
             (monto,)
         )
+
         conn.commit()
         cur.close()
         conn.close()
@@ -142,7 +158,13 @@ def ventas():
     conn = get_db()
     cur = conn.cursor()
 
-    cur.execute("SELECT id FROM caja WHERE cerrada = FALSE ORDER BY fecha_apertura DESC LIMIT 1")
+    cur.execute("""
+        SELECT id 
+        FROM caja 
+        WHERE cerrada = FALSE 
+        ORDER BY fecha_apertura DESC 
+        LIMIT 1
+    """)
     caja = cur.fetchone()
 
     if not caja:
@@ -223,7 +245,13 @@ def cerrar_caja():
     conn = get_db()
     cur = conn.cursor()
 
-    cur.execute("SELECT id, monto_inicial FROM caja WHERE cerrada = FALSE ORDER BY fecha_apertura DESC LIMIT 1")
+    cur.execute("""
+        SELECT id, monto_inicial 
+        FROM caja 
+        WHERE cerrada = FALSE 
+        ORDER BY fecha_apertura DESC 
+        LIMIT 1
+    """)
     caja = cur.fetchone()
 
     if not caja:
@@ -236,10 +264,13 @@ def cerrar_caja():
     cur.execute("SELECT COALESCE(SUM(total),0) FROM ventas WHERE caja_id = %s", (caja_id,))
     total_ventas = cur.fetchone()[0]
 
-    cur.execute(
-        "UPDATE caja SET total_ventas = %s, cerrada = TRUE, fecha_cierre = CURRENT_TIMESTAMP WHERE id = %s",
-        (total_ventas, caja_id)
-    )
+    cur.execute("""
+        UPDATE caja 
+        SET total_ventas = %s, 
+            cerrada = TRUE, 
+            fecha_cierre = CURRENT_TIMESTAMP 
+        WHERE id = %s
+    """, (total_ventas, caja_id))
 
     conn.commit()
     cur.close()
