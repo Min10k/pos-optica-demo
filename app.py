@@ -10,7 +10,8 @@ DATABASE_URL = os.environ.get("DATABASE_URL")
 def get_db():
     if not DATABASE_URL:
         raise Exception("DATABASE_URL no está configurada")
-    return psycopg.connect(DATABASE_URL)
+    return psycopg.connect(DATABASE_URL, sslmode="require")
+
 
 # ======================
 # LOGIN DEMO
