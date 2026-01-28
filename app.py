@@ -6,22 +6,23 @@ app = Flask(__name__)
 app.secret_key = "demo_pos_optica"
 
 # ======================
-# CONEXIÓN BD (NEON)
+# CONEXIÓN BD (NEON) — ESTABLE
 # ======================
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
 def get_db():
     return psycopg.connect(
         DATABASE_URL,
-        sslmode="require"
+        sslmode="require",
+        connect_timeout=5
     )
 
 # ======================
 # USUARIOS DEMO
 # ======================
 USUARIOS = {
-    "admin": {"password": "admin123", "rol": "admin"},
-    "caja": {"password": "caja123", "rol": "caja"}
+    "admin": {"password": "admin123"},
+    "caja": {"password": "caja123"}
 }
 
 # ======================
@@ -35,7 +36,6 @@ def login():
 
         if u in USUARIOS and USUARIOS[u]["password"] == p:
             session["usuario"] = u
-            session["rol"] = USUARIOS[u]["rol"]
             return redirect(url_for("dashboard"))
 
         return "Credenciales incorrectas"
@@ -43,8 +43,8 @@ def login():
     return """
     <h2>Login POS Óptica</h2>
     <form method="post">
-        <input name="usuario" placeholder="Usuario" required><br><br>
-        <input name="password" type="password" placeholder="Contraseña" required><br><br>
+        <input name="usuario" required><br><br>
+        <input name="password" type="password" required><br><br>
         <button>Entrar</button>
     </form>
     """
@@ -57,13 +57,9 @@ def dashboard():
     if "usuario" not in session:
         return redirect(url_for("login"))
 
-    return f"""
+    return """
     <h1>Dashboard POS Óptica</h1>
-    <p><b>Usuario:</b> {session['usuario']}</p>
-    <hr>
-
     <a href="/clientes">👤 Clientes</a><br><br>
-
     <a href="/logout">Cerrar sesión</a>
     """
 
@@ -75,12 +71,15 @@ def clientes():
     if "usuario" not in session:
         return redirect(url_for("login"))
 
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute("SELECT id, nombre, telefono, email FROM clientes ORDER BY nombre")
-    clientes = cur.fetchall()
-    cur.close()
-    conn.close()
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("SELECT nombre, telefono, email FROM clientes ORDER BY nombre")
+        clientes = cur.fetchall()
+        cur.close()
+        conn.close()
+    except Exception as e:
+        return f"Error al cargar clientes: {e}"
 
     html = "<h2>Clientes</h2>"
     html += "<a href='/clientes/nuevo'>➕ Nuevo cliente</a><br><br>"
@@ -88,10 +87,9 @@ def clientes():
     html += "<tr><th>Nombre</th><th>Teléfono</th><th>Email</th></tr>"
 
     for c in clientes:
-        html += f"<tr><td>{c[1]}</td><td>{c[2]}</td><td>{c[3]}</td></tr>"
+        html += f"<tr><td>{c[0]}</td><td>{c[1]}</td><td>{c[2]}</td></tr>"
 
-    html += "</table><br>"
-    html += "<a href='/dashboard'>Volver</a>"
+    html += "</table><br><a href='/dashboard'>Volver</a>"
     return html
 
 # ======================
@@ -107,28 +105,30 @@ def cliente_nuevo():
         telefono = request.form["telefono"]
         email = request.form["email"]
 
-        conn = get_db()
-        cur = conn.cursor()
-        cur.execute(
-            "INSERT INTO clientes (nombre, telefono, email) VALUES (%s, %s, %s)",
-            (nombre, telefono, email)
-        )
-        conn.commit()
-        cur.close()
-        conn.close()
+        try:
+            conn = get_db()
+            cur = conn.cursor()
+            cur.execute(
+                "INSERT INTO clientes (nombre, telefono, email) VALUES (%s, %s, %s)",
+                (nombre, telefono, email)
+            )
+            conn.commit()
+            cur.close()
+            conn.close()
+        except Exception as e:
+            return f"Error al guardar cliente: {e}"
 
         return redirect(url_for("clientes"))
 
     return """
     <h2>Nuevo cliente</h2>
     <form method="post">
-        <input name="nombre" placeholder="Nombre" required><br><br>
-        <input name="telefono" placeholder="Teléfono"><br><br>
-        <input name="email" type="email" placeholder="Email"><br><br>
-        <button>Guardar cliente</button>
+        <input name="nombre" required><br><br>
+        <input name="telefono"><br><br>
+        <input name="email" type="email"><br><br>
+        <button>Guardar</button>
     </form>
-    <br>
-    <a href="/clientes">Volver</a>
+    <br><a href="/clientes">Volver</a>
     """
 
 # ======================
