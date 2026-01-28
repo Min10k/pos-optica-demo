@@ -5,19 +5,13 @@ from flask import Flask, request, redirect, url_for, session
 app = Flask(__name__)
 app.secret_key = "demo_pos_optica"
 
-# ======================
-# CONEXIÓN A BD (NEON)
-# ======================
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
 def get_db():
-    return psycopg.connect(
-        DATABASE_URL,
-        sslmode="require"
-    )
+    return psycopg.connect(DATABASE_URL)
 
 # ======================
-# LOGIN DEMO
+# USUARIOS DEMO
 # ======================
 USUARIOS = {
     "admin": {"password": "admin123", "rol": "admin"},
@@ -43,8 +37,8 @@ def login():
     return """
     <h2>Login POS Óptica</h2>
     <form method="post">
-        <input name="usuario" placeholder="Usuario" required><br><br>
-        <input name="password" type="password" placeholder="Contraseña" required><br><br>
+        <input name="usuario" placeholder="Usuario"><br><br>
+        <input name="password" type="password" placeholder="Contraseña"><br><br>
         <button>Entrar</button>
     </form>
     """
@@ -57,31 +51,21 @@ def dashboard():
     if "usuario" not in session:
         return redirect(url_for("login"))
 
-    estado_caja = "🔴 Caja CERRADA"
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT id FROM caja WHERE cerrada = FALSE ORDER BY fecha_apertura DESC LIMIT 1"
+    )
+    caja = cur.fetchone()
+    cur.close()
+    conn.close()
 
-    try:
-        conn = get_db()
-        cur = conn.cursor()
-        cur.execute("""
-            SELECT id 
-            FROM caja 
-            WHERE cerrada = FALSE 
-            ORDER BY fecha_apertura DESC 
-            LIMIT 1
-        """)
-        caja = cur.fetchone()
-        cur.close()
-        conn.close()
-
-        if caja:
-            estado_caja = f"🟢 Caja ABIERTA (ID {caja[0]})"
-    except Exception as e:
-        estado_caja = "⚠️ Error al consultar estado de caja"
+    estado = "🟢 Caja ABIERTA" if caja else "🔴 Caja CERRADA"
 
     return f"""
     <h1>Dashboard POS Óptica</h1>
     <p><b>Usuario:</b> {session['usuario']}</p>
-    <p><b>Estado de caja:</b> {estado_caja}</p>
+    <p><b>Estado:</b> {estado}</p>
     <hr>
 
     <a href="/abrir_caja">🔓 Abrir caja</a><br><br>
@@ -114,7 +98,6 @@ def abrir_caja():
             "INSERT INTO caja (monto_inicial) VALUES (%s)",
             (monto,)
         )
-
         conn.commit()
         cur.close()
         conn.close()
@@ -147,7 +130,7 @@ def inventario():
     html = "<h2>Inventario</h2><ul>"
     for p in productos:
         html += f"<li>{p[0]} - ${p[1]} | Stock: {p[2]}</li>"
-    html += "</ul><a href='/dashboard'>Volver</a>"
+    html += "</ul><br><a href='/dashboard'>Volver</a>"
     return html
 
 # ======================
@@ -158,13 +141,9 @@ def ventas():
     conn = get_db()
     cur = conn.cursor()
 
-    cur.execute("""
-        SELECT id 
-        FROM caja 
-        WHERE cerrada = FALSE 
-        ORDER BY fecha_apertura DESC 
-        LIMIT 1
-    """)
+    cur.execute(
+        "SELECT id FROM caja WHERE cerrada = FALSE ORDER BY fecha_apertura DESC LIMIT 1"
+    )
     caja = cur.fetchone()
 
     if not caja:
@@ -178,7 +157,10 @@ def ventas():
         producto_id = request.form["producto"]
         cantidad = int(request.form["cantidad"])
 
-        cur.execute("SELECT precio, stock FROM productos WHERE id = %s", (producto_id,))
+        cur.execute(
+            "SELECT precio, stock FROM productos WHERE id = %s",
+            (producto_id,)
+        )
         precio, stock = cur.fetchone()
 
         if cantidad > stock:
@@ -220,7 +202,7 @@ def ventas():
     return html
 
 # ======================
-# CLIENTES (solo ver)
+# CLIENTES (LISTA)
 # ======================
 @app.route("/clientes")
 def clientes():
@@ -231,11 +213,46 @@ def clientes():
     cur.close()
     conn.close()
 
-    html = "<h2>Clientes</h2><ul>"
+    html = "<h2>Clientes</h2>"
+    html += "<a href='/clientes/nuevo'>➕ Nuevo cliente</a><br><br><ul>"
     for c in clientes:
         html += f"<li>{c[1]}</li>"
-    html += "</ul><a href='/dashboard'>Volver</a>"
+    html += "</ul><br><a href='/dashboard'>Volver</a>"
     return html
+
+# ======================
+# CLIENTE NUEVO
+# ======================
+@app.route("/clientes/nuevo", methods=["GET", "POST"])
+def cliente_nuevo():
+    if request.method == "POST":
+        nombre = request.form["nombre"]
+        telefono = request.form["telefono"]
+        email = request.form["email"]
+
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO clientes (nombre, telefono, email) VALUES (%s, %s, %s)",
+            (nombre, telefono, email)
+        )
+        conn.commit()
+        cur.close()
+        conn.close()
+
+        return redirect(url_for("clientes"))
+
+    return """
+    <h2>Nuevo cliente</h2>
+    <form method="post">
+        <input name="nombre" required placeholder="Nombre"><br><br>
+        <input name="telefono" placeholder="Teléfono"><br><br>
+        <input name="email" type="email" placeholder="Email"><br><br>
+        <button>Guardar</button>
+    </form>
+    <br>
+    <a href="/clientes">Volver</a>
+    """
 
 # ======================
 # CERRAR CAJA
@@ -245,13 +262,9 @@ def cerrar_caja():
     conn = get_db()
     cur = conn.cursor()
 
-    cur.execute("""
-        SELECT id, monto_inicial 
-        FROM caja 
-        WHERE cerrada = FALSE 
-        ORDER BY fecha_apertura DESC 
-        LIMIT 1
-    """)
+    cur.execute(
+        "SELECT id, monto_inicial FROM caja WHERE cerrada = FALSE ORDER BY fecha_apertura DESC LIMIT 1"
+    )
     caja = cur.fetchone()
 
     if not caja:
@@ -261,28 +274,34 @@ def cerrar_caja():
 
     caja_id, monto_inicial = caja
 
-    cur.execute("SELECT COALESCE(SUM(total),0) FROM ventas WHERE caja_id = %s", (caja_id,))
+    cur.execute(
+        "SELECT COALESCE(SUM(total),0) FROM ventas WHERE caja_id = %s",
+        (caja_id,)
+    )
     total_ventas = cur.fetchone()[0]
 
-    cur.execute("""
-        UPDATE caja 
-        SET total_ventas = %s, 
-            cerrada = TRUE, 
-            fecha_cierre = CURRENT_TIMESTAMP 
+    cur.execute(
+        """
+        UPDATE caja
+        SET total_ventas = %s,
+            cerrada = TRUE,
+            fecha_cierre = CURRENT_TIMESTAMP
         WHERE id = %s
-    """, (total_ventas, caja_id))
+        """,
+        (total_ventas, caja_id)
+    )
 
     conn.commit()
     cur.close()
     conn.close()
 
-    total_caja = monto_inicial + total_ventas
+    total = monto_inicial + total_ventas
 
     return f"""
     <h2>Cierre de caja</h2>
     <p>Monto inicial: ${monto_inicial}</p>
     <p>Total ventas: ${total_ventas}</p>
-    <p><b>Total en caja: ${total_caja}</b></p>
+    <p><b>Total en caja: ${total}</b></p>
     <br>
     <a href="/dashboard">Volver</a>
     """
