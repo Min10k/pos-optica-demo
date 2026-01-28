@@ -7,10 +7,10 @@ from flask import (
 from werkzeug.utils import secure_filename
 
 # ======================
-# CONFIG
+# CONFIGURACIÓN
 # ======================
 app = Flask(__name__)
-app.secret_key = "demo_pos_optica"
+app.secret_key = "pos_optica_seguro"
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
@@ -20,11 +20,12 @@ app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
 
 
 def get_db():
-    return psycopg.connect(DATABASE_URL)
+    # Neon requiere SSL
+    return psycopg.connect(DATABASE_URL, sslmode="require")
 
 
 # ======================
-# LOGIN DEMO
+# LOGIN (DEMO)
 # ======================
 USUARIOS = {
     "admin": {"password": "admin123", "rol": "admin"},
@@ -35,12 +36,12 @@ USUARIOS = {
 @app.route("/", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
-        u = request.form["usuario"]
-        p = request.form["password"]
+        usuario = request.form["usuario"]
+        password = request.form["password"]
 
-        if u in USUARIOS and USUARIOS[u]["password"] == p:
-            session["usuario"] = u
-            session["rol"] = USUARIOS[u]["rol"]
+        if usuario in USUARIOS and USUARIOS[usuario]["password"] == password:
+            session["usuario"] = usuario
+            session["rol"] = USUARIOS[usuario]["rol"]
             return redirect(url_for("dashboard"))
 
         return "Credenciales incorrectas"
@@ -48,8 +49,8 @@ def login():
     return """
     <h2>Login POS Óptica</h2>
     <form method="post">
-        <input name="usuario" placeholder="Usuario"><br><br>
-        <input name="password" type="password" placeholder="Contraseña"><br><br>
+        <input name="usuario" placeholder="Usuario" required><br><br>
+        <input name="password" type="password" placeholder="Contraseña" required><br><br>
         <button>Entrar</button>
     </form>
     """
@@ -71,54 +72,65 @@ def dashboard():
 
     return """
     <h1>Dashboard POS Óptica</h1>
-    <a href="/clientes">👤 Clientes</a><br><br>
-    <a href="/logout">Cerrar sesión</a>
+    <ul>
+        <li><a href="/clientes">👤 Clientes</a></li>
+        <li><a href="/logout">Cerrar sesión</a></li>
+    </ul>
     """
 
 
 # ======================
-# CLIENTES
+# CLIENTES (LISTA)
 # ======================
 @app.route("/clientes")
 def clientes():
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute("SELECT id, nombre FROM clientes ORDER BY nombre")
-    clientes = cur.fetchall()
-    cur.close()
-    conn.close()
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("SELECT id, nombre FROM clientes ORDER BY nombre")
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
+    except Exception as e:
+        return f"Error al cargar clientes: {e}"
 
     html = "<h2>Clientes</h2><ul>"
-    for c in clientes:
+    for c in rows:
         html += f"<li>{c[1]} - <a href='/cliente/{c[0]}'>Ver</a></li>"
     html += "</ul><br><a href='/dashboard'>Volver</a>"
     return html
 
 
+# ======================
+# VER CLIENTE + DOCUMENTOS
+# ======================
 @app.route("/cliente/<int:cliente_id>")
 def ver_cliente(cliente_id):
-    conn = get_db()
-    cur = conn.cursor()
+    try:
+        conn = get_db()
+        cur = conn.cursor()
 
-    cur.execute(
-        "SELECT nombre, telefono, email FROM clientes WHERE id = %s",
-        (cliente_id,)
-    )
-    cliente = cur.fetchone()
+        cur.execute(
+            "SELECT nombre, telefono, email FROM clientes WHERE id = %s",
+            (cliente_id,)
+        )
+        cliente = cur.fetchone()
 
-    cur.execute(
-        """
-        SELECT id, nombre_archivo
-        FROM documentos_cliente
-        WHERE cliente_id = %s
-        ORDER BY fecha DESC
-        """,
-        (cliente_id,)
-    )
-    documentos = cur.fetchall()
+        cur.execute(
+            """
+            SELECT id, nombre_archivo
+            FROM documentos_cliente
+            WHERE cliente_id = %s
+            ORDER BY fecha DESC
+            """,
+            (cliente_id,)
+        )
+        documentos = cur.fetchall()
 
-    cur.close()
-    conn.close()
+        cur.close()
+        conn.close()
+    except Exception as e:
+        return f"Error al cargar cliente: {e}"
 
     html = f"""
     <h2>Cliente: {cliente[0]}</h2>
@@ -130,10 +142,10 @@ def ver_cliente(cliente_id):
     """
     for d in documentos:
         html += f"<li>{d[1]} - <a href='/descargar/{d[0]}'>Descargar</a></li>"
-    html += """
+    html += f"""
     </ul>
 
-    <h3>Subir nuevo PDF</h3>
+    <h3>Subir PDF</h3>
     <form method="post" action="/subir_documento" enctype="multipart/form-data">
         <input type="hidden" name="cliente_id" value="{cliente_id}">
         <input type="file" name="archivo" accept="application/pdf" required>
@@ -142,7 +154,7 @@ def ver_cliente(cliente_id):
     </form>
 
     <br>
-    <a href="/clientes">Volver a clientes</a>
+    <a href="/clientes">Volver</a>
     """
     return html
 
@@ -153,28 +165,31 @@ def ver_cliente(cliente_id):
 @app.route("/subir_documento", methods=["POST"])
 def subir_documento():
     cliente_id = request.form["cliente_id"]
-    archivo = request.files["archivo"]
+    archivo = request.files.get("archivo")
 
     if not archivo or archivo.filename == "":
         return "Archivo inválido"
 
-    filename = secure_filename(archivo.filename)
-    ruta = os.path.join(app.config["UPLOAD_FOLDER"], filename)
+    nombre = secure_filename(archivo.filename)
+    ruta = os.path.join(app.config["UPLOAD_FOLDER"], nombre)
     archivo.save(ruta)
 
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute(
-        """
-        INSERT INTO documentos_cliente
-        (cliente_id, nombre_archivo, ruta_archivo)
-        VALUES (%s, %s, %s)
-        """,
-        (cliente_id, filename, ruta)
-    )
-    conn.commit()
-    cur.close()
-    conn.close()
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO documentos_cliente
+            (cliente_id, nombre_archivo, ruta_archivo)
+            VALUES (%s, %s, %s)
+            """,
+            (cliente_id, nombre, ruta)
+        )
+        conn.commit()
+        cur.close()
+        conn.close()
+    except Exception as e:
+        return f"Error al guardar documento: {e}"
 
     return redirect(url_for("ver_cliente", cliente_id=cliente_id))
 
@@ -184,27 +199,25 @@ def subir_documento():
 # ======================
 @app.route("/descargar/<int:doc_id>")
 def descargar(doc_id):
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute(
-        """
-        SELECT nombre_archivo, ruta_archivo
-        FROM documentos_cliente
-        WHERE id = %s
-        """,
-        (doc_id,)
-    )
-    doc = cur.fetchone()
-    cur.close()
-    conn.close()
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT nombre_archivo FROM documentos_cliente WHERE id = %s",
+            (doc_id,)
+        )
+        row = cur.fetchone()
+        cur.close()
+        conn.close()
+    except Exception as e:
+        return f"Error al descargar: {e}"
 
-    if not doc:
+    if not row:
         return "Documento no encontrado"
 
-    nombre, ruta = doc
     return send_from_directory(
         app.config["UPLOAD_FOLDER"],
-        nombre,
+        row[0],
         as_attachment=True
     )
 
