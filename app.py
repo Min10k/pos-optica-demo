@@ -57,40 +57,78 @@ def dashboard():
     if "usuario" not in session:
         return redirect(url_for("login"))
 
-    estado = "🔴 Caja CERRADA"
-
-    try:
-        conn = get_db()
-        cur = conn.cursor()
-        cur.execute("""
-            SELECT id 
-            FROM caja 
-            WHERE cerrada = FALSE 
-            ORDER BY fecha_apertura DESC 
-            LIMIT 1
-        """)
-        caja = cur.fetchone()
-        cur.close()
-        conn.close()
-
-        if caja:
-            estado = "🟢 Caja ABIERTA"
-    except:
-        estado = "⚠️ Error consultando caja"
-
     return f"""
     <h1>Dashboard POS Óptica</h1>
     <p><b>Usuario:</b> {session['usuario']}</p>
-    <p><b>Estado:</b> {estado}</p>
     <hr>
 
-    <a href="/abrir_caja">Abrir caja</a><br><br>
-    <a href="/ventas">Nueva venta</a><br><br>
-    <a href="/inventario">Inventario</a><br><br>
-    <a href="/clientes">Clientes</a><br><br>
-    <a href="/cerrar_caja">Cerrar caja</a><br><br>
+    <a href="/clientes">👤 Clientes</a><br><br>
 
     <a href="/logout">Cerrar sesión</a>
+    """
+
+# ======================
+# CLIENTES (LISTA)
+# ======================
+@app.route("/clientes")
+def clientes():
+    if "usuario" not in session:
+        return redirect(url_for("login"))
+
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("SELECT id, nombre, telefono, email FROM clientes ORDER BY nombre")
+    clientes = cur.fetchall()
+    cur.close()
+    conn.close()
+
+    html = "<h2>Clientes</h2>"
+    html += "<a href='/clientes/nuevo'>➕ Nuevo cliente</a><br><br>"
+    html += "<table border='1' cellpadding='5'>"
+    html += "<tr><th>Nombre</th><th>Teléfono</th><th>Email</th></tr>"
+
+    for c in clientes:
+        html += f"<tr><td>{c[1]}</td><td>{c[2]}</td><td>{c[3]}</td></tr>"
+
+    html += "</table><br>"
+    html += "<a href='/dashboard'>Volver</a>"
+    return html
+
+# ======================
+# CLIENTE NUEVO
+# ======================
+@app.route("/clientes/nuevo", methods=["GET", "POST"])
+def cliente_nuevo():
+    if "usuario" not in session:
+        return redirect(url_for("login"))
+
+    if request.method == "POST":
+        nombre = request.form["nombre"]
+        telefono = request.form["telefono"]
+        email = request.form["email"]
+
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO clientes (nombre, telefono, email) VALUES (%s, %s, %s)",
+            (nombre, telefono, email)
+        )
+        conn.commit()
+        cur.close()
+        conn.close()
+
+        return redirect(url_for("clientes"))
+
+    return """
+    <h2>Nuevo cliente</h2>
+    <form method="post">
+        <input name="nombre" placeholder="Nombre" required><br><br>
+        <input name="telefono" placeholder="Teléfono"><br><br>
+        <input name="email" type="email" placeholder="Email"><br><br>
+        <button>Guardar cliente</button>
+    </form>
+    <br>
+    <a href="/clientes">Volver</a>
     """
 
 # ======================
