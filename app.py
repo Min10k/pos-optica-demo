@@ -1,26 +1,32 @@
 import os
 import psycopg
-from flask import Flask, request, redirect, url_for, session
+from flask import Flask, request, redirect, url_for, session, send_from_directory
 
 app = Flask(__name__)
 app.secret_key = "demo_pos_optica"
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+UPLOAD_FOLDER = os.path.join(BASE_DIR, "uploads")
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
 def get_db():
     if not DATABASE_URL:
-        raise Exception("DATABASE_URL no está configurada")
+        raise Exception("DATABASE_URL no configurada")
     return psycopg.connect(DATABASE_URL, sslmode="require")
 
-
 # ======================
-# LOGIN DEMO
+# USUARIOS DEMO
 # ======================
 USUARIOS = {
     "admin": {"password": "admin123", "rol": "admin"},
     "caja": {"password": "caja123", "rol": "caja"}
 }
 
+# ======================
+# LOGIN
+# ======================
 @app.route("/", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
@@ -37,8 +43,8 @@ def login():
     return """
     <h2>Login POS Óptica</h2>
     <form method="post">
-        <input name="usuario" placeholder="Usuario" required><br><br>
-        <input name="password" type="password" placeholder="Contraseña" required><br><br>
+        <input name="usuario" required placeholder="Usuario"><br><br>
+        <input name="password" type="password" required placeholder="Contraseña"><br><br>
         <button>Entrar</button>
     </form>
     """
@@ -75,33 +81,113 @@ def dashboard():
     """
 
 # ======================
-# CLIENTES (A)
+# CLIENTES (LISTA)
 # ======================
 @app.route("/clientes")
 def clientes():
     if "usuario" not in session:
         return redirect("/")
 
-    try:
-        conn = get_db()
-        cur = conn.cursor()
-        cur.execute("""
-            SELECT id, nombre, telefono, email
-            FROM clientes
-            ORDER BY nombre
-        """)
-        clientes = cur.fetchall()
-        cur.close()
-        conn.close()
-    except Exception as e:
-        return f"Error al cargar clientes: {e}"
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("SELECT id, nombre FROM clientes ORDER BY nombre")
+    data = cur.fetchall()
+    cur.close()
+    conn.close()
 
     html = "<h2>Clientes</h2><ul>"
-    for c in clientes:
-        html += f"<li>{c[1]} - {c[2]} - {c[3]}</li>"
+    for c in data:
+        html += f"<li><a href='/cliente/{c[0]}'>{c[1]}</a></li>"
     html += "</ul><br><a href='/dashboard'>Volver</a>"
-
     return html
+
+# ======================
+# DETALLE CLIENTE + PDFs
+# ======================
+@app.route("/cliente/<int:cliente_id>", methods=["GET", "POST"])
+def cliente_detalle(cliente_id):
+    if "usuario" not in session:
+        return redirect("/")
+
+    conn = get_db()
+    cur = conn.cursor()
+
+    # Nombre cliente
+    cur.execute("SELECT nombre FROM clientes WHERE id = %s", (cliente_id,))
+    cliente = cur.fetchone()
+    if not cliente:
+        cur.close()
+        conn.close()
+        return "Cliente no encontrado"
+
+    # Subir PDF
+    if request.method == "POST":
+        archivo = request.files["archivo"]
+        if archivo and archivo.filename.lower().endswith(".pdf"):
+            ruta_cliente = os.path.join(UPLOAD_FOLDER, str(cliente_id))
+            os.makedirs(ruta_cliente, exist_ok=True)
+
+            ruta = os.path.join(ruta_cliente, archivo.filename)
+            archivo.save(ruta)
+
+            cur.execute("""
+                INSERT INTO documentos_cliente (cliente_id, nombre_archivo, ruta_archivo)
+                VALUES (%s, %s, %s)
+            """, (cliente_id, archivo.filename, ruta))
+            conn.commit()
+
+    # Listar PDFs
+    cur.execute("""
+        SELECT id, nombre_archivo
+        FROM documentos_cliente
+        WHERE cliente_id = %s
+        ORDER BY fecha DESC
+    """, (cliente_id,))
+    docs = cur.fetchall()
+
+    cur.close()
+    conn.close()
+
+    html = f"<h2>Cliente: {cliente[0]}</h2>"
+    html += """
+    <h3>Subir PDF</h3>
+    <form method="post" enctype="multipart/form-data">
+        <input type="file" name="archivo" accept="application/pdf" required>
+        <button>Subir</button>
+    </form>
+    <hr>
+    <h3>Documentos</h3>
+    <ul>
+    """
+    for d in docs:
+        html += f"<li><a href='/descargar/{d[0]}'>{d[1]}</a></li>"
+    html += "</ul><br><a href='/clientes'>Volver</a>"
+    return html
+
+# ======================
+# DESCARGAR PDF
+# ======================
+@app.route("/descargar/<int:doc_id>")
+def descargar_pdf(doc_id):
+    if "usuario" not in session:
+        return redirect("/")
+
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT nombre_archivo, ruta_archivo
+        FROM documentos_cliente
+        WHERE id = %s
+    """, (doc_id,))
+    doc = cur.fetchone()
+    cur.close()
+    conn.close()
+
+    if not doc:
+        return "Archivo no encontrado"
+
+    ruta = os.path.dirname(doc[1])
+    return send_from_directory(ruta, doc[0], as_attachment=True)
 
 # ======================
 # LOGOUT
