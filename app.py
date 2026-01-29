@@ -1,10 +1,13 @@
 import os
 import psycopg
+import pandas as pd
 from flask import (
     Flask, request, redirect, url_for,
-    session, send_from_directory, abort
+    session, send_from_directory, abort,
+    Response
 )
 from werkzeug.utils import secure_filename
+from datetime import date
 
 # ======================
 # CONFIG
@@ -38,7 +41,7 @@ def require_roles(*roles):
 
 
 # ======================
-# LOGIN (BD)
+# LOGIN
 # ======================
 @app.route("/", methods=["GET", "POST"])
 def login():
@@ -92,186 +95,133 @@ def dashboard():
         return login_required()
 
     rol = session["rol"]
-
-    links = "<ul>"
-    if rol in ("admin", "caja"):
-        links += "<li><a href='/abrir_caja'>Abrir caja</a></li>"
-        links += "<li><a href='/cerrar_caja'>Cerrar caja</a></li>"
-    if rol in ("admin", "caja", "ventas"):
-        links += "<li><a href='/ventas'>Ventas</a></li>"
-    if rol in ("admin", "consulta"):
-        links += "<li><a href='/inventario'>Inventario</a></li>"
-    if rol in ("admin",):
-        links += "<li><a href='/usuarios'>Usuarios</a></li>"
-    links += "<li><a href='/clientes'>Clientes</a></li>"
-    links += "<li><a href='/logout'>Salir</a></li>"
-    links += "</ul>"
-
-    return f"""
+    html = f"""
     <h1>Dashboard POS Óptica</h1>
     <p>Usuario: <b>{session['usuario']}</b></p>
     <p>Rol: <b>{rol}</b></p>
     <hr>
-    {links}
-    """
-
-
-# ======================
-# USUARIOS (ADMIN)
-# ======================
-@app.route("/usuarios", methods=["GET", "POST"])
-def usuarios():
-    if login_required():
-        return login_required()
-    require_roles("admin")
-
-    conn = get_db()
-    cur = conn.cursor()
-
-    if request.method == "POST":
-        cur.execute(
-            """
-            INSERT INTO usuarios (usuario, password, rol)
-            VALUES (%s,%s,%s)
-            """,
-            (
-                request.form["usuario"],
-                request.form["password"],
-                request.form["rol"]
-            )
-        )
-        conn.commit()
-
-    cur.execute(
-        "SELECT usuario, rol, activo FROM usuarios ORDER BY usuario"
-    )
-    rows = cur.fetchall()
-    cur.close()
-    conn.close()
-
-    html = """
-    <h2>Usuarios</h2>
-    <form method="post">
-        <input name="usuario" placeholder="Usuario" required>
-        <input name="password" placeholder="Password" required>
-        <select name="rol">
-            <option value="admin">admin</option>
-            <option value="caja">caja</option>
-            <option value="ventas">ventas</option>
-            <option value="consulta">consulta</option>
-        </select>
-        <button>Agregar</button>
-    </form>
-    <hr>
     <ul>
     """
-    for u in rows:
-        html += f"<li>{u[0]} - {u[1]} - {'Activo' if u[2] else 'Inactivo'}</li>"
-    html += "</ul><a href='/dashboard'>Volver</a>"
+
+    if rol in ("admin", "caja"):
+        html += "<li><a href='/abrir_caja'>Abrir caja</a></li>"
+        html += "<li><a href='/cerrar_caja'>Cerrar caja</a></li>"
+    if rol in ("admin", "caja", "ventas"):
+        html += "<li><a href='/ventas'>Ventas</a></li>"
+    if rol in ("admin", "consulta"):
+        html += "<li><a href='/inventario'>Inventario</a></li>"
+    if rol == "admin":
+        html += "<li><a href='/usuarios'>Usuarios</a></li>"
+    if rol in ("admin", "consulta"):
+        html += "<li><a href='/reportes'>📊 Reportes</a></li>"
+
+    html += "<li><a href='/clientes'>Clientes</a></li>"
+    html += "<li><a href='/logout'>Salir</a></li>"
+    html += "</ul>"
     return html
 
 
 # ======================
-# INVENTARIO (LECTURA)
+# REPORTES
 # ======================
-@app.route("/inventario")
-def inventario():
+@app.route("/reportes", methods=["GET", "POST"])
+def reportes():
     if login_required():
         return login_required()
     require_roles("admin", "consulta")
 
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute("SELECT nombre, precio, stock FROM productos ORDER BY nombre")
-    rows = cur.fetchall()
-    cur.close()
-    conn.close()
-
-    html = "<h2>Inventario</h2><ul>"
-    for r in rows:
-        html += f"<li>{r[0]} - ${r[1]} | Stock {r[2]}</li>"
-    html += "</ul><a href='/dashboard'>Volver</a>"
-    return html
-
-
-# ======================
-# CLIENTES (YA FUNCIONA)
-# ======================
-@app.route("/clientes")
-def clientes():
-    if login_required():
-        return login_required()
+    fecha = request.form.get("fecha") or date.today().isoformat()
 
     conn = get_db()
     cur = conn.cursor()
-    cur.execute("SELECT id, nombre FROM clientes ORDER BY nombre")
-    rows = cur.fetchall()
-    cur.close()
-    conn.close()
-
-    html = "<h2>Clientes</h2><ul>"
-    for c in rows:
-        html += f"<li>{c[1]} - <a href='/cliente/{c[0]}'>Ver</a></li>"
-    html += "</ul><a href='/dashboard'>Volver</a>"
-    return html
-
-
-@app.route("/cliente/<int:cliente_id>")
-def ver_cliente(cliente_id):
-    if login_required():
-        return login_required()
-
-    conn = get_db()
-    cur = conn.cursor()
-
-    cur.execute(
-        "SELECT nombre, telefono, email FROM clientes WHERE id=%s",
-        (cliente_id,)
-    )
-    cliente = cur.fetchone()
 
     cur.execute(
         """
-        SELECT id, nombre_archivo
-        FROM documentos_cliente
-        WHERE cliente_id=%s
-        ORDER BY fecha DESC
+        SELECT
+            v.fecha,
+            v.usuario,
+            v.total,
+            c.id AS caja_id
+        FROM ventas v
+        JOIN caja c ON c.id = v.caja_id
+        WHERE DATE(v.fecha) = %s
+        ORDER BY v.fecha
         """,
-        (cliente_id,)
+        (fecha,)
     )
-    docs = cur.fetchall()
+    ventas = cur.fetchall()
+
+    cur.execute(
+        """
+        SELECT
+            usuario,
+            SUM(total)
+        FROM ventas
+        WHERE DATE(fecha) = %s
+        GROUP BY usuario
+        """,
+        (fecha,)
+    )
+    totales_usuario = cur.fetchall()
+
     cur.close()
     conn.close()
 
-    html = f"<h2>{cliente[0]}</h2><ul>"
-    for d in docs:
-        html += f"<li>{d[1]} - <a href='/descargar/{d[0]}'>Descargar</a></li>"
-    html += "</ul><a href='/clientes'>Volver</a>"
+    html = f"""
+    <h2>Reporte de ventas por día</h2>
+    <form method="post">
+        <input type="date" name="fecha" value="{fecha}">
+        <button>Ver</button>
+        <a href="/reporte_excel?fecha={fecha}">⬇️ Excel</a>
+    </form>
+    <hr>
+    <h3>Ventas</h3>
+    <ul>
+    """
+    for v in ventas:
+        html += f"<li>{v[0]} | {v[1]} | ${v[2]} | Caja {v[3]}</li>"
+    html += "</ul><hr><h3>Totales por usuario</h3><ul>"
+    for t in totales_usuario:
+        html += f"<li>{t[0]}: ${t[1]}</li>"
+    html += "</ul><br><a href='/dashboard'>Volver</a>"
     return html
 
 
-@app.route("/descargar/<int:doc_id>")
-def descargar(doc_id):
+# ======================
+# REPORTE EXCEL
+# ======================
+@app.route("/reporte_excel")
+def reporte_excel():
     if login_required():
         return login_required()
+    require_roles("admin", "consulta")
+
+    fecha = request.args.get("fecha")
 
     conn = get_db()
-    cur = conn.cursor()
-    cur.execute(
-        "SELECT nombre_archivo FROM documentos_cliente WHERE id=%s",
-        (doc_id,)
+    df = pd.read_sql(
+        """
+        SELECT
+            v.fecha,
+            v.usuario,
+            v.total,
+            c.id AS caja_id
+        FROM ventas v
+        JOIN caja c ON c.id = v.caja_id
+        WHERE DATE(v.fecha) = %s
+        ORDER BY v.fecha
+        """,
+        conn,
+        params=(fecha,)
     )
-    row = cur.fetchone()
-    cur.close()
     conn.close()
 
-    if not row:
-        return "Documento no encontrado"
+    output = pd.ExcelWriter("reporte.xlsx", engine="xlsxwriter")
+    df.to_excel(output, index=False, sheet_name="Ventas")
+    output.close()
 
     return send_from_directory(
-        app.config["UPLOAD_FOLDER"],
-        row[0],
-        as_attachment=True
+        ".", "reporte.xlsx", as_attachment=True
     )
 
 
