@@ -32,7 +32,7 @@ color:white;text-decoration:none;border-radius:6px;margin:5px 0}
 table{width:100%;border-collapse:collapse}
 th,td{padding:10px;border-bottom:1px solid #ddd}
 th{background:#e3f2fd}
-input{padding:8px;width:100%;margin-bottom:10px}
+input,select{padding:8px;width:100%;margin-bottom:10px}
 .msg{padding:10px;background:#e8f5e9;border-radius:6px;margin-bottom:10px}
 .err{padding:10px;background:#ffebee;border-radius:6px;margin-bottom:10px}
 </style>
@@ -130,6 +130,137 @@ def dashboard():
     return layout("Dashboard", body)
 
 # ======================
+# ABRIR CAJA
+# ======================
+@app.route("/abrir_caja", methods=["GET","POST"])
+def abrir_caja():
+    if request.method == "POST":
+        monto = request.form["monto"]
+
+        conn = get_db()
+        cur = conn.cursor()
+
+        cur.execute("SELECT id FROM caja WHERE cerrada=FALSE")
+        if cur.fetchone():
+            return layout("Caja", "<div class='err'>Ya hay una caja abierta</div>")
+
+        cur.execute(
+            "INSERT INTO caja (monto_inicial) VALUES (%s)",
+            (monto,)
+        )
+        conn.commit()
+        cur.close()
+        conn.close()
+
+        return redirect(url_for("dashboard"))
+
+    body = """
+    <div class="card">
+        <form method="post">
+            <input name="monto" type="number" required placeholder="Monto inicial">
+            <button class="btn green">Abrir caja</button>
+        </form>
+        <a class="btn gray" href="/dashboard">Volver</a>
+    </div>
+    """
+    return layout("Abrir caja", body)
+
+# ======================
+# VENTAS
+# ======================
+@app.route("/ventas", methods=["GET","POST"])
+def ventas():
+    if "usuario" not in session:
+        return redirect(url_for("login"))
+
+    conn = get_db()
+    cur = conn.cursor()
+
+    cur.execute("SELECT id FROM caja WHERE cerrada=FALSE LIMIT 1")
+    caja = cur.fetchone()
+    if not caja:
+        return layout("Ventas", "<div class='err'>No hay caja abierta</div>")
+
+    caja_id = caja[0]
+    mensaje = ""
+
+    if request.method == "POST":
+        prod_id = request.form["producto"]
+        cantidad = int(request.form["cantidad"])
+
+        cur.execute("SELECT precio, stock FROM productos WHERE id=%s",(prod_id,))
+        precio, stock = cur.fetchone()
+
+        if cantidad > stock:
+            mensaje = "<div class='err'>Stock insuficiente</div>"
+        else:
+            total = precio * cantidad
+            cur.execute(
+                "INSERT INTO ventas (caja_id,total,usuario) VALUES (%s,%s,%s)",
+                (caja_id,total,session["usuario"])
+            )
+            cur.execute(
+                "UPDATE productos SET stock = stock - %s WHERE id=%s",
+                (cantidad,prod_id)
+            )
+            conn.commit()
+            mensaje = f"<div class='msg'>✅ Venta realizada – Total ${total}</div>"
+
+    cur.execute("SELECT id,nombre,precio,stock FROM productos")
+    productos = cur.fetchall()
+    cur.close()
+    conn.close()
+
+    options = "".join([
+        f"<option value='{p[0]}'>{p[1]} - ${p[2]} (Stock {p[3]})</option>"
+        for p in productos
+    ])
+
+    body = f"""
+    {mensaje}
+    <div class="card">
+        <form method="post">
+            <select name="producto">{options}</select>
+            <input name="cantidad" type="number" min="1" required>
+            <button class="btn green">Vender</button>
+        </form>
+        <a class="btn gray" href="/dashboard">Volver</a>
+    </div>
+    """
+    return layout("Ventas", body)
+
+# ======================
+# INVENTARIO
+# ======================
+@app.route("/inventario")
+def inventario():
+    if "usuario" not in session:
+        return redirect(url_for("login"))
+
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("SELECT nombre,precio,stock FROM productos ORDER BY nombre")
+    productos = cur.fetchall()
+    cur.close()
+    conn.close()
+
+    rows = "".join([
+        f"<tr><td>{p[0]}</td><td>${p[1]}</td><td>{p[2]}</td></tr>"
+        for p in productos
+    ])
+
+    body = f"""
+    <div class="card">
+        <table>
+            <tr><th>Producto</th><th>Precio</th><th>Stock</th></tr>
+            {rows}
+        </table>
+        <a class="btn gray" href="/dashboard">Volver</a>
+    </div>
+    """
+    return layout("Inventario", body)
+
+# ======================
 # CLIENTES
 # ======================
 @app.route("/clientes")
@@ -139,30 +270,21 @@ def clientes():
 
     conn = get_db()
     cur = conn.cursor()
-    cur.execute("SELECT id, nombre, telefono, email FROM clientes ORDER BY nombre")
+    cur.execute("SELECT nombre, telefono, email FROM clientes ORDER BY nombre")
     clientes = cur.fetchall()
     cur.close()
     conn.close()
 
-    rows = ""
-    for c in clientes:
-        rows += f"""
-        <tr>
-            <td>{c[1]}</td>
-            <td>{c[2] or ""}</td>
-            <td>{c[3] or ""}</td>
-        </tr>
-        """
+    rows = "".join([
+        f"<tr><td>{c[0]}</td><td>{c[1] or ''}</td><td>{c[2] or ''}</td></tr>"
+        for c in clientes
+    ])
 
     body = f"""
     <div class="card">
         <a class="btn green" href="/clientes/nuevo">➕ Nuevo cliente</a>
         <table>
-            <tr>
-                <th>Nombre</th>
-                <th>Teléfono</th>
-                <th>Email</th>
-            </tr>
+            <tr><th>Nombre</th><th>Teléfono</th><th>Email</th></tr>
             {rows}
         </table>
         <a class="btn gray" href="/dashboard">Volver</a>
@@ -206,10 +328,46 @@ def nuevo_cliente():
     return layout("Nuevo cliente", body)
 
 # ======================
-# POS BASE (VENTAS / INVENTARIO / CAJA)
+# CERRAR CAJA
 # ======================
-# ⬇️ SE ASUME QUE YA FUNCIONAN Y NO SE TOCAN ⬇️
-# Usa exactamente las rutas del POS base V1 que ya confirmaste como OK
+@app.route("/cerrar_caja")
+def cerrar_caja():
+    if "usuario" not in session:
+        return redirect(url_for("login"))
+
+    conn = get_db()
+    cur = conn.cursor()
+
+    cur.execute(
+        "SELECT id,monto_inicial FROM caja WHERE cerrada=FALSE LIMIT 1"
+    )
+    caja = cur.fetchone()
+    if not caja:
+        return layout("Caja", "<div class='err'>No hay caja abierta</div>")
+
+    caja_id, monto = caja
+    cur.execute("SELECT COALESCE(SUM(total),0) FROM ventas WHERE caja_id=%s",(caja_id,))
+    total_ventas = cur.fetchone()[0]
+
+    cur.execute(
+        "UPDATE caja SET total_ventas=%s, cerrada=TRUE WHERE id=%s",
+        (total_ventas,caja_id)
+    )
+    conn.commit()
+    cur.close()
+    conn.close()
+
+    total = monto + total_ventas
+
+    body = f"""
+    <div class="card">
+        <p>Monto inicial: ${monto}</p>
+        <p>Total ventas: ${total_ventas}</p>
+        <h3>Total en caja: ${total}</h3>
+        <a class="btn gray" href="/dashboard">Volver</a>
+    </div>
+    """
+    return layout("Caja cerrada", body)
 
 # ======================
 # RUN
