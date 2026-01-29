@@ -5,7 +5,6 @@ from flask import (
     session, abort, send_from_directory
 )
 from werkzeug.utils import secure_filename
-from datetime import date
 
 # ======================
 # CONFIG
@@ -39,7 +38,7 @@ def require_roles(*roles):
 
 
 # ======================
-# BASE STYLE (ÓPTICA)
+# ESTILO BASE (ÓPTICA)
 # ======================
 BASE_STYLE = """
 <style>
@@ -70,12 +69,11 @@ def layout(title, body):
     <header>
         <h1>👓 POS Óptica</h1>
         <nav>
-            <a href="/dashboard">Dashboard</a>
-            <a href="/ventas">Ventas</a>
-            <a href="/inventario">Inventario</a>
-            <a href="/clientes">Clientes</a>
-            <a href="/reportes">Reportes</a>
-            <a href="/logout">Salir</a>
+            <a href="/dashboard">🏠 Dashboard</a>
+            <a href="/ventas">🧾 Ventas</a>
+            <a href="/inventario">📦 Inventario</a>
+            <a href="/clientes">👤 Clientes</a>
+            <a href="/logout">🚪 Salir</a>
         </nav>
     </header>
     <div class="container">
@@ -83,7 +81,6 @@ def layout(title, body):
         {body}
     </div>
     """
-
 
 # ======================
 # LOGIN
@@ -125,7 +122,6 @@ def login():
     </div>
     """
 
-
 @app.route("/logout")
 def logout():
     session.clear()
@@ -141,21 +137,17 @@ def dashboard():
 
     conn = get_db()
     cur = conn.cursor()
-    cur.execute("SELECT id FROM caja WHERE cerrada=FALSE ORDER BY fecha_apertura DESC LIMIT 1")
+    cur.execute("SELECT id FROM caja WHERE cerrada=FALSE LIMIT 1")
     caja = cur.fetchone()
     cur.close()
     conn.close()
 
-    estado = "🟢 Caja ABIERTA" if caja else "🔴 Caja CERRADA"
+    estado = "🟢 Caja abierta" if caja else "🔴 Caja cerrada"
 
     body = f"""
     <div class="card">
         <p><b>Usuario:</b> {session['usuario']}</p>
-        <p><b>Rol:</b> {session['rol']}</p>
-        <p><b>Estado:</b> {estado}</p>
-    </div>
-
-    <div class="card">
+        <p><b>Estado caja:</b> {estado}</p>
         <a class="btn green" href="/abrir_caja">Abrir caja</a>
         <a class="btn red" href="/cerrar_caja">Cerrar caja</a>
     </div>
@@ -164,193 +156,70 @@ def dashboard():
 
 
 # ======================
-# CAJA
+# VENTAS (ESTABILIZADAS)
 # ======================
-@app.route("/abrir_caja", methods=["GET","POST"])
-def abrir_caja():
+@app.route("/ventas", methods=["GET", "POST"])
+def ventas():
     if login_required(): return login_required()
-    require_roles("admin","caja")
-
-    if request.method == "POST":
-        monto = request.form["monto"]
-        conn = get_db()
-        cur = conn.cursor()
-
-        cur.execute("SELECT id FROM caja WHERE cerrada=FALSE")
-        if cur.fetchone():
-            return "Ya hay una caja abierta"
-
-        cur.execute("INSERT INTO caja (monto_inicial) VALUES (%s)", (monto,))
-        conn.commit()
-        cur.close()
-        conn.close()
-        return redirect(url_for("dashboard"))
-
-    body = """
-    <div class="card">
-        <form method="post">
-            <label>Monto inicial</label>
-            <input name="monto" type="number" required>
-            <button class="btn green">Abrir caja</button>
-        </form>
-    </div>
-    """
-    return layout("Abrir caja", body)
-
-
-@app.route("/cerrar_caja")
-def cerrar_caja():
-    if login_required(): return login_required()
-    require_roles("admin","caja")
 
     conn = get_db()
     cur = conn.cursor()
 
-    cur.execute(
-        "SELECT id, monto_inicial FROM caja WHERE cerrada=FALSE ORDER BY fecha_apertura DESC LIMIT 1"
-    )
+    cur.execute("SELECT id FROM caja WHERE cerrada=FALSE LIMIT 1")
     caja = cur.fetchone()
     if not caja:
-        return "No hay caja abierta"
+        return layout("Ventas", "<div class='card'>❌ No puedes vender sin caja abierta.<br><a class='btn' href='/dashboard'>Volver</a></div>")
 
-    caja_id, monto_inicial = caja
-    cur.execute("SELECT COALESCE(SUM(total),0) FROM ventas WHERE caja_id=%s",(caja_id,))
-    total_ventas = cur.fetchone()[0]
-
-    cur.execute(
-        "UPDATE caja SET total_ventas=%s, cerrada=TRUE, fecha_cierre=NOW() WHERE id=%s",
-        (total_ventas, caja_id)
-    )
-    conn.commit()
-    cur.close()
-    conn.close()
-
-    body = f"""
-    <div class="card">
-        <p>Monto inicial: ${monto_inicial}</p>
-        <p>Total ventas: ${total_ventas}</p>
-        <h3>Total en caja: ${monto_inicial + total_ventas}</h3>
-        <a class="btn" href="/dashboard">Volver</a>
-    </div>
-    """
-    return layout("Cierre de caja", body)
-
-
-# ======================
-# INVENTARIO + KARDEX
-# ======================
-@app.route("/inventario")
-def inventario():
-    if login_required(): return login_required()
-
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute("SELECT id,nombre,stock FROM productos ORDER BY nombre")
-    productos = cur.fetchall()
-    cur.close()
-    conn.close()
-
-    rows = ""
-    for p in productos:
-        estado = "<span class='ok'>OK</span>"
-        if p[2] <= 3:
-            estado = "<span class='bad'>BAJO</span>"
-
-        rows += f"""
-        <tr>
-            <td>{p[1]}</td>
-            <td>{p[2]}</td>
-            <td>{estado}</td>
-            <td><a class="btn gray" href="/kardex/{p[0]}">Kardex</a></td>
-        </tr>
-        """
-
-    body = f"""
-    <div class="card">
-        <table>
-            <tr><th>Producto</th><th>Stock</th><th>Estado</th><th></th></tr>
-            {rows}
-        </table>
-        <br>
-        <a class="btn green" href="/movimiento">Entrada / Ajuste</a>
-    </div>
-    """
-    return layout("Inventario", body)
-
-
-@app.route("/movimiento", methods=["GET","POST"])
-def movimiento():
-    if login_required(): return login_required()
-    require_roles("admin")
-
-    conn = get_db()
-    cur = conn.cursor()
+    caja_id = caja[0]
 
     if request.method == "POST":
-        prod = request.form["producto"]
-        tipo = request.form["tipo"]
-        cant = int(request.form["cantidad"])
-        motivo = request.form["motivo"]
+        prod_id = request.form["producto"]
+        cantidad = int(request.form["cantidad"])
 
-        if tipo == "entrada":
-            cur.execute("UPDATE productos SET stock=stock+%s WHERE id=%s",(cant,prod))
-        else:
-            cur.execute("UPDATE productos SET stock=stock-%s WHERE id=%s",(cant,prod))
+        cur.execute("SELECT precio, stock FROM productos WHERE id=%s",(prod_id,))
+        precio, stock = cur.fetchone()
 
-        cur.execute("""
-            INSERT INTO movimientos_inventario
-            (producto_id,tipo,cantidad,motivo,usuario)
-            VALUES (%s,%s,%s,%s,%s)
-        """,(prod,tipo,cant,motivo,session["usuario"]))
+        if cantidad > stock:
+            return layout("Error", "<div class='card'>❌ Stock insuficiente.<br><a class='btn' href='/ventas'>Volver</a></div>")
+
+        total = precio * cantidad
+
+        cur.execute(
+            "INSERT INTO ventas (caja_id,total,usuario) VALUES (%s,%s,%s)",
+            (caja_id,total,session["usuario"])
+        )
+        cur.execute(
+            "UPDATE productos SET stock=stock-%s WHERE id=%s",
+            (cantidad,prod_id)
+        )
         conn.commit()
-        return redirect(url_for("inventario"))
+        return redirect(url_for("ventas"))
 
-    cur.execute("SELECT id,nombre FROM productos")
+    cur.execute("SELECT id,nombre,precio,stock FROM productos")
     productos = cur.fetchall()
     cur.close()
     conn.close()
 
-    opts = "".join([f"<option value='{p[0]}'>{p[1]}</option>" for p in productos])
+    options = "".join([
+        f"<option value='{p[0]}'>{p[1]} - ${p[2]} (Stock {p[3]})</option>"
+        for p in productos
+    ])
 
     body = f"""
     <div class="card">
         <form method="post">
-            <select name="producto">{opts}</select>
-            <select name="tipo">
-                <option value="entrada">Entrada</option>
-                <option value="ajuste">Ajuste</option>
-            </select>
-            <input name="cantidad" type="number" required>
-            <input name="motivo" placeholder="Motivo">
-            <button class="btn green">Guardar</button>
+            <select name="producto">{options}</select>
+            <input name="cantidad" type="number" min="1" required>
+            <button class="btn green">Vender</button>
         </form>
+        <a class="btn gray" href="/dashboard">⬅ Volver</a>
     </div>
     """
-    return layout("Movimiento de inventario", body)
-
-
-@app.route("/kardex/<int:pid>")
-def kardex(pid):
-    if login_required(): return login_required()
-
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT tipo,cantidad,motivo,usuario,fecha
-        FROM movimientos_inventario
-        WHERE producto_id=%s ORDER BY fecha DESC
-    """,(pid,))
-    movs = cur.fetchall()
-    cur.close()
-    conn.close()
-
-    items = "".join([f"<li>{m[4]} | {m[0]} | {m[1]} | {m[2]} | {m[3]}</li>" for m in movs])
-
-    return layout("Kardex", f"<div class='card'><ul>{items}</ul></div>")
+    return layout("Ventas", body)
 
 
 # ======================
-# CLIENTES + PDF
+# CLIENTES (ALTA + VER)
 # ======================
 @app.route("/clientes")
 def clientes():
@@ -364,116 +233,46 @@ def clientes():
     conn.close()
 
     rows = "".join([f"<li>{c[1]} - <a href='/cliente/{c[0]}'>Ver</a></li>" for c in clientes])
-    return layout("Clientes", f"<div class='card'><ul>{rows}</ul></div>")
-
-
-@app.route("/cliente/<int:cid>")
-def ver_cliente(cid):
-    if login_required(): return login_required()
-
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute("SELECT nombre FROM clientes WHERE id=%s",(cid,))
-    cliente = cur.fetchone()
-
-    cur.execute(
-        "SELECT id,nombre_archivo FROM documentos_cliente WHERE cliente_id=%s",(cid,)
-    )
-    docs = cur.fetchall()
-    cur.close()
-    conn.close()
-
-    archivos = "".join(
-        [f"<li>{d[1]} - <a href='/descargar/{d[0]}'>Descargar</a></li>" for d in docs]
-    )
 
     body = f"""
     <div class="card">
-        <h3>{cliente[0]}</h3>
-        <ul>{archivos}</ul>
-
-        <form method="post" action="/subir" enctype="multipart/form-data">
-            <input type="hidden" name="cliente_id" value="{cid}">
-            <input type="file" name="archivo" accept="application/pdf" required>
-            <button class="btn green">Subir PDF</button>
-        </form>
+        <a class="btn green" href="/nuevo_cliente">➕ Nuevo cliente</a>
+        <ul>{rows}</ul>
+        <a class="btn gray" href="/dashboard">⬅ Volver</a>
     </div>
     """
-    return layout("Cliente", body)
+    return layout("Clientes", body)
 
 
-@app.route("/subir", methods=["POST"])
-def subir():
+@app.route("/nuevo_cliente", methods=["GET","POST"])
+def nuevo_cliente():
     if login_required(): return login_required()
 
-    cid = request.form["cliente_id"]
-    archivo = request.files["archivo"]
-    nombre = secure_filename(archivo.filename)
-    ruta = os.path.join(UPLOAD_FOLDER, nombre)
-    archivo.save(ruta)
+    if request.method == "POST":
+        nombre = request.form["nombre"]
+        tel = request.form["telefono"]
+        email = request.form["email"]
 
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute("""
-        INSERT INTO documentos_cliente (cliente_id,nombre_archivo,ruta_archivo)
-        VALUES (%s,%s,%s)
-    """,(cid,nombre,ruta))
-    conn.commit()
-    cur.close()
-    conn.close()
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO clientes (nombre,telefono,email) VALUES (%s,%s,%s)",
+            (nombre,tel,email)
+        )
+        conn.commit()
+        cur.close()
+        conn.close()
+        return redirect(url_for("clientes"))
 
-    return redirect(url_for("ver_cliente", cid=cid))
-
-
-@app.route("/descargar/<int:doc>")
-def descargar(doc):
-    if login_required(): return login_required()
-
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute("SELECT nombre_archivo FROM documentos_cliente WHERE id=%s",(doc,))
-    row = cur.fetchone()
-    cur.close()
-    conn.close()
-
-    return send_from_directory(UPLOAD_FOLDER, row[0], as_attachment=True)
-
-
-# ======================
-# REPORTES
-# ======================
-@app.route("/reportes", methods=["GET","POST"])
-def reportes():
-    if login_required(): return login_required()
-
-    fecha = request.form.get("fecha", date.today())
-
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT fecha,usuario,total FROM ventas
-        WHERE DATE(fecha)=%s ORDER BY fecha
-    """,(fecha,))
-    ventas = cur.fetchall()
-    cur.close()
-    conn.close()
-
-    filas = "".join([f"<li>{v[0]} | {v[1]} | ${v[2]}</li>" for v in ventas])
-
-    body = f"""
+    body = """
     <div class="card">
         <form method="post">
-            <input type="date" name="fecha" value="{fecha}">
-            <button class="btn">Ver</button>
+            <input name="nombre" placeholder="Nombre" required>
+            <input name="telefono" placeholder="Teléfono">
+            <input name="email" placeholder="Email">
+            <button class="btn green">Guardar</button>
         </form>
-        <ul>{filas}</ul>
+        <a class="btn gray" href="/clientes">⬅ Volver</a>
     </div>
     """
-    return layout("Reporte de ventas", body)
-
-
-# ======================
-# RUN
-# ======================
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
+    return layout("Nuevo cliente", body)
