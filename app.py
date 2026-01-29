@@ -136,138 +136,7 @@ def dashboard():
     return layout("Dashboard", body)
 
 # ======================
-# ABRIR CAJA
-# ======================
-@app.route("/abrir_caja", methods=["GET","POST"])
-def abrir_caja():
-    if request.method == "POST":
-        monto = request.form["monto"]
-
-        conn = get_db()
-        cur = conn.cursor()
-
-        cur.execute("SELECT id FROM caja WHERE cerrada=FALSE")
-        if cur.fetchone():
-            return layout("Caja", "<div class='err'>Ya hay una caja abierta</div>")
-
-        cur.execute(
-            "INSERT INTO caja (monto_inicial) VALUES (%s)",
-            (monto,)
-        )
-        conn.commit()
-        cur.close()
-        conn.close()
-
-        return redirect(url_for("dashboard"))
-
-    body = """
-    <div class="card">
-        <form method="post">
-            <input name="monto" type="number" required placeholder="Monto inicial">
-            <button class="btn green">Abrir caja</button>
-        </form>
-        <a class="btn gray" href="/dashboard">Volver</a>
-    </div>
-    """
-    return layout("Abrir caja", body)
-
-# ======================
-# VENTAS
-# ======================
-@app.route("/ventas", methods=["GET","POST"])
-def ventas():
-    if "usuario" not in session:
-        return redirect(url_for("login"))
-
-    conn = get_db()
-    cur = conn.cursor()
-
-    cur.execute("SELECT id FROM caja WHERE cerrada=FALSE LIMIT 1")
-    caja = cur.fetchone()
-    if not caja:
-        return layout("Ventas", "<div class='err'>No hay caja abierta</div>")
-
-    caja_id = caja[0]
-    mensaje = ""
-
-    if request.method == "POST":
-        prod = request.form["producto"]
-        cantidad = int(request.form["cantidad"])
-
-        cur.execute("SELECT precio, stock FROM productos WHERE id=%s",(prod,))
-        precio, stock = cur.fetchone()
-
-        if cantidad > stock:
-            mensaje = "<div class='err'>Stock insuficiente</div>"
-        else:
-            total = precio * cantidad
-            cur.execute(
-                "INSERT INTO ventas (caja_id,total,usuario) VALUES (%s,%s,%s)",
-                (caja_id,total,session["usuario"])
-            )
-            cur.execute(
-                "UPDATE productos SET stock = stock - %s WHERE id=%s",
-                (cantidad,prod)
-            )
-            conn.commit()
-            mensaje = f"<div class='msg'>Venta realizada – Total ${total}</div>"
-
-    cur.execute("SELECT id,nombre,precio,stock FROM productos")
-    productos = cur.fetchall()
-    cur.close()
-    conn.close()
-
-    opciones = "".join([
-        f"<option value='{p[0]}'>{p[1]} - ${p[2]} (Stock {p[3]})</option>"
-        for p in productos
-    ])
-
-    body = f"""
-    {mensaje}
-    <div class="card">
-        <form method="post">
-            <select name="producto">{opciones}</select>
-            <input name="cantidad" type="number" min="1" required>
-            <button class="btn green">Vender</button>
-        </form>
-        <a class="btn gray" href="/dashboard">Volver</a>
-    </div>
-    """
-    return layout("Ventas", body)
-
-# ======================
-# INVENTARIO (ARREGLADO)
-# ======================
-@app.route("/inventario")
-def inventario():
-    if "usuario" not in session:
-        return redirect(url_for("login"))
-
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute("SELECT nombre, precio, stock FROM productos ORDER BY nombre")
-    productos = cur.fetchall()
-    cur.close()
-    conn.close()
-
-    filas = "".join([
-        f"<tr><td>{p[0]}</td><td>${p[1]}</td><td>{p[2]}</td></tr>"
-        for p in productos
-    ])
-
-    body = f"""
-    <div class="card">
-        <table>
-            <tr><th>Producto</th><th>Precio</th><th>Stock</th></tr>
-            {filas}
-        </table>
-        <a class="btn gray" href="/dashboard">Volver</a>
-    </div>
-    """
-    return layout("Inventario", body)
-
-# ======================
-# CLIENTES + PDF
+# CLIENTES
 # ======================
 @app.route("/clientes")
 def clientes():
@@ -296,10 +165,15 @@ def clientes():
 def nuevo_cliente():
     if request.method == "POST":
         nombre = request.form["nombre"]
+        telefono = request.form["telefono"]
+        email = request.form["email"]
 
         conn = get_db()
         cur = conn.cursor()
-        cur.execute("INSERT INTO clientes (nombre) VALUES (%s)",(nombre,))
+        cur.execute(
+            "INSERT INTO clientes (nombre,telefono,email) VALUES (%s,%s,%s)",
+            (nombre,telefono,email)
+        )
         conn.commit()
         cur.close()
         conn.close()
@@ -310,7 +184,9 @@ def nuevo_cliente():
     <div class="card">
         <form method="post">
             <input name="nombre" required placeholder="Nombre del cliente">
-            <button class="btn green">Guardar</button>
+            <input name="telefono" placeholder="Teléfono">
+            <input name="email" placeholder="Correo electrónico">
+            <button class="btn green">Guardar cliente</button>
         </form>
         <a class="btn gray" href="/clientes">Volver</a>
     </div>
@@ -321,7 +197,11 @@ def nuevo_cliente():
 def ver_cliente(cid):
     conn = get_db()
     cur = conn.cursor()
-    cur.execute("SELECT nombre FROM clientes WHERE id=%s",(cid,))
+
+    cur.execute(
+        "SELECT nombre,telefono,email FROM clientes WHERE id=%s",
+        (cid,)
+    )
     cliente = cur.fetchone()
 
     cur.execute(
@@ -329,6 +209,7 @@ def ver_cliente(cid):
         (cid,)
     )
     docs = cur.fetchall()
+
     cur.close()
     conn.close()
 
@@ -340,6 +221,10 @@ def ver_cliente(cid):
     body = f"""
     <div class="card">
         <h4>{cliente[0]}</h4>
+        <p>📞 {cliente[1] or '-'}</p>
+        <p>📧 {cliente[2] or '-'}</p>
+
+        <h4>Documentos</h4>
         <ul>{archivos}</ul>
 
         <form method="post" action="/subir_pdf" enctype="multipart/form-data">
@@ -384,41 +269,6 @@ def descargar(doc):
     conn.close()
 
     return send_from_directory(UPLOAD_FOLDER, row[0], as_attachment=True)
-
-# ======================
-# CERRAR CAJA
-# ======================
-@app.route("/cerrar_caja")
-def cerrar_caja():
-    conn = get_db()
-    cur = conn.cursor()
-
-    cur.execute("SELECT id,monto_inicial FROM caja WHERE cerrada=FALSE LIMIT 1")
-    caja = cur.fetchone()
-    if not caja:
-        return layout("Caja", "<div class='err'>No hay caja abierta</div>")
-
-    caja_id, monto = caja
-    cur.execute("SELECT COALESCE(SUM(total),0) FROM ventas WHERE caja_id=%s",(caja_id,))
-    total_ventas = cur.fetchone()[0]
-
-    cur.execute(
-        "UPDATE caja SET total_ventas=%s, cerrada=TRUE WHERE id=%s",
-        (total_ventas,caja_id)
-    )
-    conn.commit()
-    cur.close()
-    conn.close()
-
-    body = f"""
-    <div class="card">
-        <p>Monto inicial: ${monto}</p>
-        <p>Total ventas: ${total_ventas}</p>
-        <h3>Total en caja: ${monto + total_ventas}</h3>
-        <a class="btn gray" href="/dashboard">Volver</a>
-    </div>
-    """
-    return layout("Caja cerrada", body)
 
 # ======================
 # RUN
