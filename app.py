@@ -433,3 +433,164 @@ def cerrar_caja():
 # ======================
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT",10000)))
+
+    @app.route("/pos")
+def pos_ui():
+    return """
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>POS Óptica</title>
+<style>
+body{
+    margin:0;
+    font-family:Arial;
+    background:#e5e5e5;
+}
+header{
+    background:#2f3b45;
+    color:white;
+    padding:10px;
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+}
+header button{
+    background:#d32f2f;
+    color:white;
+    border:none;
+    padding:10px 15px;
+    font-size:16px;
+}
+.main{
+    display:flex;
+    height:calc(100vh - 50px);
+}
+.left{
+    flex:3;
+    background:white;
+    padding:15px;
+}
+.right{
+    flex:2;
+    background:#f4f4f4;
+    padding:10px;
+    display:grid;
+    grid-template-columns:1fr 1fr;
+    gap:10px;
+}
+.box{
+    border:1px solid #ccc;
+    padding:10px;
+    margin-bottom:10px;
+}
+.table{
+    width:100%;
+    border-collapse:collapse;
+}
+.table th,.table td{
+    border-bottom:1px solid #ddd;
+    padding:8px;
+    text-align:left;
+}
+.btn{
+    background:#9e9e9e;
+    border:none;
+    padding:15px;
+    font-size:14px;
+    cursor:pointer;
+}
+.btn.green{background:#4caf50;color:white}
+.btn.blue{background:#1976d2;color:white}
+.btn.orange{background:#f9a825}
+.footer{
+    display:flex;
+    justify-content:space-between;
+    padding:10px;
+    background:#ddd;
+}
+.footer button{
+    padding:15px;
+    font-size:16px;
+}
+</style>
+</head>
+
+<body>
+
+<header>
+    <div><b>POS Óptica</b></div>
+    <div>
+        <button>Cerrar (F9)</button>
+    </div>
+</header>
+
+<div class="main">
+
+    <!-- IZQUIERDA -->
+    <div class="left">
+
+        <div class="box">
+            <b>Cliente</b><br>
+            <input style="width:100%;padding:8px" placeholder="Buscar cliente">
+            <br><br>
+            <button class="btn orange">Buscar cliente</button>
+            <button class="btn blue">Agregar cliente</button>
+        </div>
+
+        <div class="box">
+            <b>Buscar producto</b><br>
+            <input style="width:100%;padding:8px" placeholder="Nombre o SKU">
+            <button class="btn orange" style="margin-top:5px">Buscar</button>
+        </div>
+
+        <table class="table">
+            <tr>
+                <th>Producto</th>
+                <th>Cant</th>
+                <th>Total</th>
+            </tr>
+            <tr>
+                <td>Lentes monofocales</td>
+                <td>1</td>
+                <td>$1200</td>
+            </tr>
+            <tr>
+                <td>Armazón</td>
+                <td>1</td>
+                <td>$800</td>
+            </tr>
+        </table>
+
+        <div class="footer">
+            <div>
+                <b>Total:</b> $2000
+            </div>
+            <button class="btn green">Pagar (F2)</button>
+        </div>
+
+    </div>
+
+    <!-- DERECHA -->
+    <div class="right">
+        <button class="btn">Agregar producto</button>
+        <button class="btn">Editar producto</button>
+        <button class="btn">Guardar venta</button>
+        <button class="btn">Ventas pendientes</button>
+        <button class="btn">Editar cliente</button>
+        <button class="btn">Abrir cajón</button>
+        <button class="btn">Descuento</button>
+        <button class="btn">Imprimir</button>
+        <button class="btn">Pago efectivo</button>
+        <button class="btn">Pago tarjeta</button>
+        <button class="btn">Pantalla completa</button>
+        <button class="btn">Reporte X</button>
+    </div>
+
+</div>
+
+</body>
+</html>
+"""
+
