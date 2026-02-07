@@ -6,6 +6,15 @@ app = Flask(__name__)
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
+if not DATABASE_URL:
+    raise RuntimeError("DATABASE_URL no está definida")
+
+DATABASE_URL = DATABASE_URL.strip()  # 🔒 elimina espacios invisibles
+
+def get_db():
+    return psycopg.connect(DATABASE_URL)
+
+
 @app.route("/")
 def test():
     try:
