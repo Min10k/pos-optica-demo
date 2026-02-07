@@ -1,6 +1,10 @@
 import os
 import psycopg
-from flask import Flask, request, redirect, url_for, session, send_from_directory
+from flask import (
+    Flask, request, redirect, url_for,
+    session, send_from_directory
+)
+from werkzeug.utils import secure_filename
 
 # ======================
 # CONFIG
@@ -9,134 +13,107 @@ app = Flask(__name__)
 app.secret_key = "pos_optica_v1"
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
+
 UPLOAD_FOLDER = "uploads"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
+
 
 def get_db():
-    return psycopg.connect(DATABASE_URL, sslmode="require")
+    return psycopg.connect(DATABASE_URL)
+
 
 # ======================
-# ESTILO
+# USUARIOS DEMO
 # ======================
-STYLE = """
-<style>
-body{font-family:Arial;background:#f4f6f8;margin:0}
-header{background:#1976d2;color:white;padding:15px}
-nav a{color:white;margin-right:15px;text-decoration:none;font-weight:bold}
-.container{padding:20px}
-.card{background:white;padding:20px;border-radius:10px;
-box-shadow:0 2px 6px rgba(0,0,0,.1);margin-bottom:20px}
-.btn{display:inline-block;padding:10px 16px;background:#1976d2;
-color:white;text-decoration:none;border-radius:6px;margin:5px 0}
-.btn.green{background:#388e3c}
-.btn.red{background:#d32f2f}
-.btn.gray{background:#555}
-table{width:100%;border-collapse:collapse}
-th,td{padding:10px;border-bottom:1px solid #ddd}
-th{background:#e3f2fd}
-input,select{padding:8px;width:100%;margin-bottom:10px}
-.msg{padding:10px;background:#e8f5e9;border-radius:6px;margin-bottom:10px}
-.err{padding:10px;background:#ffebee;border-radius:6px;margin-bottom:10px}
-</style>
-"""
+USUARIOS = {
+    "admin": {"password": "admin123", "rol": "admin"},
+    "caja": {"password": "caja123", "rol": "caja"}
+}
 
-def layout(title, body):
-    return f"""
-    {STYLE}
-    <header>
-        <h2>👓 POS Óptica</h2>
-        <nav>
-            <a href="/dashboard">Dashboard</a>
-            <a href="/ventas">Ventas</a>
-            <a href="/inventario">Inventario</a>
-            <a href="/clientes">Clientes</a>
-            <a href="/logout">Salir</a>
-        </nav>
-    </header>
-    <div class="container">
-        <h3>{title}</h3>
-        {body}
-    </div>
-    """
 
 # ======================
 # LOGIN
 # ======================
-@app.route("/", methods=["GET","POST"])
+@app.route("/", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
-        conn = get_db()
-        cur = conn.cursor()
-        cur.execute(
-            "SELECT rol FROM usuarios WHERE usuario=%s AND password=%s AND activo=TRUE",
-            (request.form["usuario"], request.form["password"])
-        )
-        row = cur.fetchone()
-        cur.close()
-        conn.close()
+        u = request.form["usuario"]
+        p = request.form["password"]
 
-        if row:
-            session["usuario"] = request.form["usuario"]
-            session["rol"] = row[0]
+        if u in USUARIOS and USUARIOS[u]["password"] == p:
+            session["usuario"] = u
+            session["rol"] = USUARIOS[u]["rol"]
             return redirect(url_for("dashboard"))
 
-        return layout("Error", "<div class='err'>Credenciales incorrectas</div>")
+        return "Credenciales incorrectas"
 
-    return f"""
-    {STYLE}
-    <div class="container" style="max-width:350px;margin-top:120px">
-        <div class="card">
-            <h3>Ingreso</h3>
-            <form method="post">
-                <input name="usuario" required placeholder="Usuario">
-                <input name="password" type="password" required placeholder="Contraseña">
-                <button class="btn">Entrar</button>
-            </form>
-        </div>
-    </div>
+    return """
+    <h2>Login POS Óptica</h2>
+    <form method="post">
+        <input name="usuario" placeholder="Usuario"><br><br>
+        <input type="password" name="password" placeholder="Contraseña"><br><br>
+        <button>Entrar</button>
+    </form>
     """
+
 
 @app.route("/logout")
 def logout():
     session.clear()
     return redirect(url_for("login"))
 
+
 # ======================
 # DASHBOARD
 # ======================
 @app.route("/dashboard")
 def dashboard():
+    if "usuario" not in session:
+        return redirect(url_for("login"))
+
     conn = get_db()
     cur = conn.cursor()
-    cur.execute("SELECT id FROM caja WHERE cerrada=FALSE LIMIT 1")
+    cur.execute("SELECT id FROM caja WHERE cerrada = FALSE ORDER BY fecha_apertura DESC LIMIT 1")
     caja = cur.fetchone()
     cur.close()
     conn.close()
 
     estado = "🟢 Caja abierta" if caja else "🔴 Caja cerrada"
 
-    return layout("Dashboard", f"""
-        <div class="card">
-            <p><b>Usuario:</b> {session['usuario']}</p>
-            <p><b>Estado de caja:</b> {estado}</p>
-            <a class="btn green" href="/abrir_caja">Abrir caja</a>
-            <a class="btn red" href="/cerrar_caja">Cerrar caja</a>
-        </div>
-    """)
+    return f"""
+    <h1>Dashboard POS Óptica</h1>
+    <p>Usuario: <b>{session['usuario']}</b></p>
+    <p>Estado: <b>{estado}</b></p>
+    <hr>
+
+    <a href="/abrir_caja">🔓 Abrir caja</a><br><br>
+    <a href="/ventas">🧾 Ventas</a><br><br>
+    <a href="/inventario">📦 Inventario</a><br><br>
+    <a href="/clientes">👤 Clientes</a><br><br>
+    <a href="/pos">🖥 POS Visual</a><br><br>
+    <a href="/cerrar_caja">🔒 Cerrar caja</a><br><br>
+
+    <a href="/logout">Cerrar sesión</a>
+    """
+
 
 # ======================
 # ABRIR CAJA
 # ======================
-@app.route("/abrir_caja", methods=["GET","POST"])
+@app.route("/abrir_caja", methods=["GET", "POST"])
 def abrir_caja():
     if request.method == "POST":
         monto = request.form["monto"]
 
         conn = get_db()
         cur = conn.cursor()
-        cur.execute("SELECT id FROM caja WHERE cerrada=FALSE")
+
+        cur.execute("SELECT id FROM caja WHERE cerrada = FALSE")
         if cur.fetchone():
-            return layout("Caja", "<div class='err'>Ya hay una caja abierta</div>")
+            cur.close()
+            conn.close()
+            return "Ya hay una caja abierta <br><a href='/dashboard'>Volver</a>"
 
         cur.execute("INSERT INTO caja (monto_inicial) VALUES (%s)", (monto,))
         conn.commit()
@@ -145,452 +122,209 @@ def abrir_caja():
 
         return redirect(url_for("dashboard"))
 
-    return layout("Abrir caja", """
-        <div class="card">
-            <form method="post">
-                <input name="monto" type="number" required placeholder="Monto inicial">
-                <button class="btn green">Abrir caja</button>
-            </form>
-            <a class="btn gray" href="/dashboard">Volver</a>
-        </div>
-    """)
+    return """
+    <h2>Abrir caja</h2>
+    <form method="post">
+        <input type="number" name="monto" required placeholder="Monto inicial">
+        <br><br>
+        <button>Abrir</button>
+    </form>
+    <br>
+    <a href="/dashboard">Volver</a>
+    """
+
 
 # ======================
-# VENTAS
-# ======================
-@app.route("/ventas", methods=["GET","POST"])
-def ventas():
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute("SELECT id FROM caja WHERE cerrada=FALSE LIMIT 1")
-    caja = cur.fetchone()
-
-    if not caja:
-        return layout("Ventas", "<div class='err'>No hay caja abierta</div>")
-
-    mensaje = ""
-
-    if request.method == "POST":
-        pid = request.form["producto"]
-        cantidad = int(request.form["cantidad"])
-
-        cur.execute("SELECT precio,stock FROM productos WHERE id=%s",(pid,))
-        precio, stock = cur.fetchone()
-
-        if cantidad > stock:
-            mensaje = "<div class='err'>Stock insuficiente</div>"
-        else:
-            total = precio * cantidad
-            cur.execute(
-                "INSERT INTO ventas (caja_id,total,usuario) VALUES (%s,%s,%s)",
-                (caja[0], total, session["usuario"])
-            )
-            cur.execute(
-                "UPDATE productos SET stock = stock - %s WHERE id=%s",
-                (cantidad, pid)
-            )
-            conn.commit()
-            mensaje = f"<div class='msg'>Venta realizada – Total ${total}</div>"
-
-    cur.execute("SELECT id,nombre,precio,stock FROM productos")
-    productos = cur.fetchall()
-    cur.close()
-    conn.close()
-
-    opciones = "".join(
-        f"<option value='{p[0]}'>{p[1]} - ${p[2]} (Stock {p[3]})</option>"
-        for p in productos
-    )
-
-    return layout("Ventas", f"""
-        {mensaje}
-        <div class="card">
-            <form method="post">
-                <select name="producto">{opciones}</select>
-                <input name="cantidad" type="number" min="1" required>
-                <button class="btn green">Vender</button>
-            </form>
-            <a class="btn gray" href="/dashboard">Volver</a>
-        </div>
-    """)
-
-# ======================
-# INVENTARIO + AJUSTE
+# INVENTARIO
 # ======================
 @app.route("/inventario")
 def inventario():
     conn = get_db()
     cur = conn.cursor()
-    cur.execute("SELECT id,nombre,precio,stock FROM productos ORDER BY nombre")
+    cur.execute("SELECT nombre, precio, stock FROM productos ORDER BY nombre")
     productos = cur.fetchall()
     cur.close()
     conn.close()
 
-    filas = "".join(
-        f"<tr><td>{p[1]}</td><td>${p[2]}</td><td>{p[3]}</td>"
-        f"<td><a class='btn gray' href='/inventario/ajustar/{p[0]}'>Ajustar</a></td></tr>"
-        for p in productos
-    )
+    html = "<h2>Inventario</h2><ul>"
+    for p in productos:
+        html += f"<li>{p[0]} - ${p[1]} | Stock: {p[2]}</li>"
+    html += "</ul><br><a href='/dashboard'>Volver</a>"
+    return html
 
-    return layout("Inventario", f"""
-        <div class="card">
-            <table>
-                <tr><th>Producto</th><th>Precio</th><th>Stock</th><th></th></tr>
-                {filas}
-            </table>
-            <a class="btn gray" href="/dashboard">Volver</a>
-        </div>
-    """)
 
-@app.route("/inventario/ajustar/<int:pid>", methods=["GET","POST"])
-def ajustar_inventario(pid):
+# ======================
+# VENTAS
+# ======================
+@app.route("/ventas", methods=["GET", "POST"])
+def ventas():
     conn = get_db()
     cur = conn.cursor()
 
+    cur.execute("SELECT id FROM caja WHERE cerrada = FALSE ORDER BY fecha_apertura DESC LIMIT 1")
+    caja = cur.fetchone()
+
+    if not caja:
+        cur.close()
+        conn.close()
+        return "No hay caja abierta<br><a href='/dashboard'>Volver</a>"
+
+    caja_id = caja[0]
+
     if request.method == "POST":
+        producto_id = request.form["producto"]
+        cantidad = int(request.form["cantidad"])
+
+        cur.execute("SELECT precio, stock FROM productos WHERE id=%s", (producto_id,))
+        precio, stock = cur.fetchone()
+
+        if cantidad > stock:
+            cur.close()
+            conn.close()
+            return "Stock insuficiente<br><a href='/ventas'>Volver</a>"
+
+        total = precio * cantidad
+
         cur.execute(
-            "UPDATE productos SET stock = stock + %s, precio = %s WHERE id = %s",
-            (int(request.form["cantidad"]), request.form["precio"], pid)
+            "INSERT INTO ventas (caja_id, total, usuario) VALUES (%s,%s,%s)",
+            (caja_id, total, session["usuario"])
         )
+
+        cur.execute(
+            "UPDATE productos SET stock = stock - %s WHERE id = %s",
+            (cantidad, producto_id)
+        )
+
         conn.commit()
         cur.close()
         conn.close()
-        return redirect(url_for("inventario"))
 
-    cur.execute("SELECT nombre,precio FROM productos WHERE id=%s",(pid,))
-    prod = cur.fetchone()
+        return "✅ Venta realizada<br><a href='/dashboard'>Volver</a>"
+
+    cur.execute("SELECT id, nombre, precio, stock FROM productos")
+    productos = cur.fetchall()
     cur.close()
     conn.close()
 
-    return layout("Ajustar inventario", f"""
-        <div class="card">
-            <h4>{prod[0]}</h4>
-            <form method="post">
-                <input name="cantidad" type="number" required placeholder="Cantidad a sumar">
-                <input name="precio" type="number" step="0.01" value="{prod[1]}" required>
-                <button class="btn green">Guardar</button>
-            </form>
-            <a class="btn gray" href="/inventario">Volver</a>
-        </div>
-    """)
+    html = "<h2>Nueva venta</h2><form method='post'>"
+    html += "<select name='producto'>"
+    for p in productos:
+        html += f"<option value='{p[0]}'>{p[1]} - ${p[2]} (Stock {p[3]})</option>"
+    html += "</select><br><br>"
+    html += "<input type='number' name='cantidad' min='1' required><br><br>"
+    html += "<button>Vender</button></form><br>"
+    html += "<a href='/dashboard'>Volver</a>"
+    return html
+
 
 # ======================
-# CLIENTES + PDF
+# CLIENTES
 # ======================
 @app.route("/clientes")
 def clientes():
     conn = get_db()
     cur = conn.cursor()
-    cur.execute("SELECT id,nombre FROM clientes ORDER BY nombre")
+    cur.execute("SELECT id, nombre FROM clientes ORDER BY nombre")
     clientes = cur.fetchall()
     cur.close()
     conn.close()
 
-    lista = "".join(
-        f"<li>{c[1]} - <a href='/cliente/{c[0]}'>Ver</a></li>"
-        for c in clientes
-    )
+    html = "<h2>Clientes</h2><ul>"
+    for c in clientes:
+        html += f"<li>{c[1]} - <a href='/cliente/{c[0]}'>Ver</a></li>"
+    html += "</ul><br><a href='/dashboard'>Volver</a>"
+    return html
 
-    return layout("Clientes", f"""
-        <div class="card">
-            <a class="btn green" href="/clientes/nuevo">➕ Nuevo cliente</a>
-            <ul>{lista}</ul>
-            <a class="btn gray" href="/dashboard">Volver</a>
-        </div>
-    """)
 
-@app.route("/clientes/nuevo", methods=["GET","POST"])
-def nuevo_cliente():
-    if request.method == "POST":
-        conn = get_db()
-        cur = conn.cursor()
-        cur.execute(
-            "INSERT INTO clientes (nombre,telefono,email) VALUES (%s,%s,%s)",
-            (request.form["nombre"], request.form["telefono"], request.form["email"])
-        )
-        conn.commit()
-        cur.close()
-        conn.close()
-        return redirect(url_for("clientes"))
-
-    return layout("Nuevo cliente", """
-        <div class="card">
-            <form method="post">
-                <input name="nombre" required placeholder="Nombre">
-                <input name="telefono" placeholder="Teléfono">
-                <input name="email" placeholder="Correo">
-                <button class="btn green">Guardar</button>
-            </form>
-            <a class="btn gray" href="/clientes">Volver</a>
-        </div>
-    """)
-
-@app.route("/cliente/<int:cid>")
-def ver_cliente(cid):
+@app.route("/cliente/<int:cliente_id>")
+def ver_cliente(cliente_id):
     conn = get_db()
     cur = conn.cursor()
-    cur.execute("SELECT nombre,telefono,email FROM clientes WHERE id=%s",(cid,))
+
+    cur.execute("SELECT nombre, telefono, email FROM clientes WHERE id=%s", (cliente_id,))
     cliente = cur.fetchone()
 
-    cur.execute(
-        "SELECT id,nombre_archivo FROM documentos_cliente WHERE cliente_id=%s",
-        (cid,)
-    )
+    cur.execute("""
+        SELECT id, nombre_archivo
+        FROM documentos_cliente
+        WHERE cliente_id=%s
+        ORDER BY fecha DESC
+    """, (cliente_id,))
     docs = cur.fetchall()
+
     cur.close()
     conn.close()
 
-    archivos = "".join(
-        f"<li>{d[1]} - <a href='/descargar/{d[0]}'>Descargar</a></li>"
-        for d in docs
-    )
+    html = f"""
+    <h2>{cliente[0]}</h2>
+    <p>Tel: {cliente[1]}</p>
+    <p>Email: {cliente[2]}</p>
 
-    return layout("Cliente", f"""
-        <div class="card">
-            <h4>{cliente[0]}</h4>
-            <p>📞 {cliente[1] or '-'}</p>
-            <p>📧 {cliente[2] or '-'}</p>
+    <h3>Documentos</h3>
+    <ul>
+    """
+    for d in docs:
+        html += f"<li>{d[1]} - <a href='/descargar/{d[0]}'>Descargar</a></li>"
+    html += """
+    </ul>
 
-            <h4>Documentos</h4>
-            <ul>{archivos}</ul>
+    <form method="post" action="/subir_documento" enctype="multipart/form-data">
+        <input type="hidden" name="cliente_id" value="{cliente_id}">
+        <input type="file" name="archivo" accept="application/pdf" required>
+        <br><br>
+        <button>Subir PDF</button>
+    </form>
+    <br>
+    <a href="/clientes">Volver</a>
+    """
+    return html
 
-            <form method="post" action="/subir_pdf" enctype="multipart/form-data">
-                <input type="hidden" name="cliente_id" value="{cid}">
-                <input type="file" name="archivo" accept="application/pdf" required>
-                <button class="btn green">Subir PDF</button>
-            </form>
 
-            <a class="btn gray" href="/clientes">Volver</a>
-        </div>
-    """)
-
-@app.route("/subir_pdf", methods=["POST"])
-def subir_pdf():
+@app.route("/subir_documento", methods=["POST"])
+def subir_documento():
+    cliente_id = request.form["cliente_id"]
     archivo = request.files["archivo"]
-    cid = request.form["cliente_id"]
 
-    ruta = os.path.join(UPLOAD_FOLDER, archivo.filename)
+    filename = secure_filename(archivo.filename)
+    ruta = os.path.join(app.config["UPLOAD_FOLDER"], filename)
     archivo.save(ruta)
 
     conn = get_db()
     cur = conn.cursor()
-    cur.execute(
-        "INSERT INTO documentos_cliente (cliente_id,nombre_archivo,ruta_archivo) VALUES (%s,%s,%s)",
-        (cid, archivo.filename, ruta)
-    )
+    cur.execute("""
+        INSERT INTO documentos_cliente (cliente_id, nombre_archivo, ruta_archivo)
+        VALUES (%s,%s,%s)
+    """, (cliente_id, filename, ruta))
     conn.commit()
     cur.close()
     conn.close()
 
-    return redirect(url_for("ver_cliente", cid=cid))
+    return redirect(url_for("ver_cliente", cliente_id=cliente_id))
 
-@app.route("/descargar/<int:doc>")
-def descargar(doc):
+
+@app.route("/descargar/<int:doc_id>")
+def descargar(doc_id):
     conn = get_db()
     cur = conn.cursor()
-    cur.execute("SELECT nombre_archivo FROM documentos_cliente WHERE id=%s",(doc,))
+    cur.execute("SELECT nombre_archivo FROM documentos_cliente WHERE id=%s", (doc_id,))
     nombre = cur.fetchone()[0]
     cur.close()
     conn.close()
 
-    return send_from_directory(UPLOAD_FOLDER, nombre, as_attachment=True)
+    return send_from_directory(app.config["UPLOAD_FOLDER"], nombre, as_attachment=True)
+
 
 # ======================
-# CERRAR CAJA
+# POS VISUAL (UI)
 # ======================
-@app.route("/cerrar_caja")
-def cerrar_caja():
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute("SELECT id,monto_inicial FROM caja WHERE cerrada=FALSE LIMIT 1")
-    caja = cur.fetchone()
+@app.route("/pos")
+def pos():
+    return "<h1>POS visual cargado ✔</h1><a href='/dashboard'>Volver</a>"
 
-    if not caja:
-        return layout("Caja", "<div class='err'>No hay caja abierta</div>")
-
-    cur.execute("SELECT COALESCE(SUM(total),0) FROM ventas WHERE caja_id=%s",(caja[0],))
-    total = cur.fetchone()[0]
-
-    cur.execute(
-        "UPDATE caja SET total_ventas=%s, cerrada=TRUE WHERE id=%s",
-        (total, caja[0])
-    )
-    conn.commit()
-    cur.close()
-    conn.close()
-
-    return layout("Caja cerrada", f"""
-        <div class="card">
-            <p>Monto inicial: ${caja[1]}</p>
-            <p>Total ventas: ${total}</p>
-            <h3>Total en caja: ${caja[1] + total}</h3>
-            <a class="btn gray" href="/dashboard">Volver</a>
-        </div>
-    """)
 
 # ======================
 # RUN
 # ======================
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT",10000)))
-
-    @app.route("/pos")
-def pos_ui():
-    return """
-<!DOCTYPE html>
-<html>
-<head>
-<meta charset="utf-8">
-<title>POS Óptica</title>
-<style>
-body{
-    margin:0;
-    font-family:Arial;
-    background:#e5e5e5;
-}
-header{
-    background:#2f3b45;
-    color:white;
-    padding:10px;
-    display:flex;
-    justify-content:space-between;
-    align-items:center;
-}
-header button{
-    background:#d32f2f;
-    color:white;
-    border:none;
-    padding:10px 15px;
-    font-size:16px;
-}
-.main{
-    display:flex;
-    height:calc(100vh - 50px);
-}
-.left{
-    flex:3;
-    background:white;
-    padding:15px;
-}
-.right{
-    flex:2;
-    background:#f4f4f4;
-    padding:10px;
-    display:grid;
-    grid-template-columns:1fr 1fr;
-    gap:10px;
-}
-.box{
-    border:1px solid #ccc;
-    padding:10px;
-    margin-bottom:10px;
-}
-.table{
-    width:100%;
-    border-collapse:collapse;
-}
-.table th,.table td{
-    border-bottom:1px solid #ddd;
-    padding:8px;
-    text-align:left;
-}
-.btn{
-    background:#9e9e9e;
-    border:none;
-    padding:15px;
-    font-size:14px;
-    cursor:pointer;
-}
-.btn.green{background:#4caf50;color:white}
-.btn.blue{background:#1976d2;color:white}
-.btn.orange{background:#f9a825}
-.footer{
-    display:flex;
-    justify-content:space-between;
-    padding:10px;
-    background:#ddd;
-}
-.footer button{
-    padding:15px;
-    font-size:16px;
-}
-</style>
-</head>
-
-<body>
-
-<header>
-    <div><b>POS Óptica</b></div>
-    <div>
-        <button>Cerrar (F9)</button>
-    </div>
-</header>
-
-<div class="main">
-
-    <!-- IZQUIERDA -->
-    <div class="left">
-
-        <div class="box">
-            <b>Cliente</b><br>
-            <input style="width:100%;padding:8px" placeholder="Buscar cliente">
-            <br><br>
-            <button class="btn orange">Buscar cliente</button>
-            <button class="btn blue">Agregar cliente</button>
-        </div>
-
-        <div class="box">
-            <b>Buscar producto</b><br>
-            <input style="width:100%;padding:8px" placeholder="Nombre o SKU">
-            <button class="btn orange" style="margin-top:5px">Buscar</button>
-        </div>
-
-        <table class="table">
-            <tr>
-                <th>Producto</th>
-                <th>Cant</th>
-                <th>Total</th>
-            </tr>
-            <tr>
-                <td>Lentes monofocales</td>
-                <td>1</td>
-                <td>$1200</td>
-            </tr>
-            <tr>
-                <td>Armazón</td>
-                <td>1</td>
-                <td>$800</td>
-            </tr>
-        </table>
-
-        <div class="footer">
-            <div>
-                <b>Total:</b> $2000
-            </div>
-            <button class="btn green">Pagar (F2)</button>
-        </div>
-
-    </div>
-
-    <!-- DERECHA -->
-    <div class="right">
-        <button class="btn">Agregar producto</button>
-        <button class="btn">Editar producto</button>
-        <button class="btn">Guardar venta</button>
-        <button class="btn">Ventas pendientes</button>
-        <button class="btn">Editar cliente</button>
-        <button class="btn">Abrir cajón</button>
-        <button class="btn">Descuento</button>
-        <button class="btn">Imprimir</button>
-        <button class="btn">Pago efectivo</button>
-        <button class="btn">Pago tarjeta</button>
-        <button class="btn">Pantalla completa</button>
-        <button class="btn">Reporte X</button>
-    </div>
-
-</div>
-
-</body>
-</html>
-"""
-
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
