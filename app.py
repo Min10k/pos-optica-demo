@@ -53,87 +53,87 @@ def dashboard():
     if "usuario" not in session:
         return redirect(url_for("login"))
 
-    return """
+    return f"""
     <h1>Dashboard POS Óptica</h1>
-    <p>Usuario: <b>{}</b></p>
+    <p>Usuario: <b>{session['usuario']}</b></p>
     <hr>
     <a href="/pos">🧾 Ir al POS</a><br><br>
     <a href="/logout">Cerrar sesión</a>
-    """.format(session["usuario"])
+    """
 
 # ======================
-# POS VISUAL (DISEÑO)
+# POS VISUAL (SOLO DISEÑO)
 # ======================
 @app.route("/pos")
 def pos():
     if "usuario" not in session:
         return redirect(url_for("login"))
 
-    return """
+    return f"""
 <!DOCTYPE html>
 <html>
 <head>
 <title>POS Óptica</title>
 <style>
-body {
+body {{
     font-family: Arial, sans-serif;
     background: #f2f2f2;
     margin: 0;
-}
+}}
 
-header {
+header {{
     background: #2f3e46;
     color: white;
     padding: 15px;
     display: flex;
     justify-content: space-between;
-}
+}}
 
-.container {
+.container {{
     display: grid;
     grid-template-columns: 65% 35%;
     height: calc(100vh - 70px);
-}
+}}
 
-.left, .right {
+.left, .right {{
     padding: 15px;
-}
+}}
 
-.box {
+.box {{
     background: white;
     padding: 10px;
     margin-bottom: 10px;
     border-radius: 5px;
-}
+}}
 
-table {
+table {{
     width: 100%;
     border-collapse: collapse;
-}
+}}
 
-th, td {
+th, td {{
     border-bottom: 1px solid #ddd;
     padding: 8px;
     text-align: center;
-}
+}}
 
-button {
+button {{
     padding: 10px;
     width: 100%;
     margin: 5px 0;
     font-size: 14px;
-}
+}}
 
-.btn-green { background: #2a9d8f; color: white; }
-.btn-red { background: #e63946; color: white; }
-.btn-gray { background: #adb5bd; }
+.btn-green {{ background: #2a9d8f; color: white; }}
+.btn-red {{ background: #e63946; color: white; }}
+.btn-gray {{ background: #adb5bd; }}
 
-footer {
+footer {{
     background: #dee2e6;
     padding: 10px;
     display: flex;
     justify-content: space-between;
-}
+}}
 </style>
 </head>
 
@@ -141,11 +141,10 @@ footer {
 
 <header>
     <div>🕶️ POS Óptica</div>
-    <div>Usuario: {}</div>
+    <div>Usuario: {session['usuario']}</div>
 </header>
 
 <div class="container">
-    <!-- IZQUIERDA -->
     <div class="left">
         <div class="box">
             <b>Cliente</b><br>
@@ -161,7 +160,7 @@ footer {
                     <th>Total</th>
                 </tr>
                 <tr>
-                    <td>Lentes monofocales</td>
+                    <td>Lentes</td>
                     <td>1</td>
                     <td>$1200</td>
                 </tr>
@@ -174,7 +173,6 @@ footer {
         </div>
     </div>
 
-    <!-- DERECHA -->
     <div class="right">
         <div class="box">
             <button class="btn-gray">Lentes</button>
@@ -184,16 +182,13 @@ footer {
 
         <div class="box">
             <button class="btn-gray">Agregar cliente</button>
-            <button class="btn-gray">Editar cliente</button>
             <button class="btn-gray">Guardar venta</button>
         </div>
     </div>
 </div>
 
 <footer>
-    <div>
-        <b>Total:</b> $2000
-    </div>
+    <div><b>Total:</b> $2000</div>
     <div>
         <button class="btn-green">PAGAR</button>
         <button class="btn-red" onclick="window.location='/dashboard'">SALIR</button>
@@ -202,7 +197,7 @@ footer {
 
 </body>
 </html>
-    """.format(session["usuario"])
+    """
 
 # ======================
 # RUN
