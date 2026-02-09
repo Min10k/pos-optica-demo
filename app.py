@@ -1,211 +1,180 @@
-import os
-import psycopg
-from flask import (
-    Flask, request, redirect, url_for,
-    session, Response
-)
-from werkzeug.utils import secure_filename
+from flask import Flask
 
-# ======================
-# CONFIGURACIÓN
-# ======================
 app = Flask(__name__)
-app.secret_key = "pos_optica_demo"
 
-DATABASE_URL = os.environ.get("DATABASE_URL")
+@app.route("/")
+def home():
+    return """
+    <h2>POS Óptica Demo</h2>
+    <a href="/pos">Entrar al POS</a>
+    """
 
-def get_db():
-    return psycopg.connect(DATABASE_URL)
+@app.route("/pos")
+def pos():
+    return """
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>POS Óptica</title>
 
-# ======================
-# USUARIOS DEMO
-# ======================
-USUARIOS = {
-    "admin": {"password": "admin123", "rol": "admin"},
-    "caja": {"password": "caja123", "rol": "caja"}
+<style>
+body {
+    margin: 0;
+    font-family: Arial, Helvetica, sans-serif;
+    background: #F4F6F8;
 }
 
-# ======================
-# LOGIN
-# ======================
-@app.route("/", methods=["GET", "POST"])
-def login():
-    if request.method == "POST":
-        u = request.form["usuario"]
-        p = request.form["password"]
+/* ===== TOP BAR ===== */
+.topbar {
+    background: #1F4FD8;
+    color: white;
+    padding: 12px 20px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
 
-        if u in USUARIOS and USUARIOS[u]["password"] == p:
-            session["usuario"] = u
-            session["rol"] = USUARIOS[u]["rol"]
-            return redirect("/dashboard")
+.logo {
+    font-size: 20px;
+    font-weight: bold;
+}
 
-        return "Credenciales incorrectas"
+.logo span {
+    font-size: 14px;
+    color: #D1D5DB;
+}
 
-    return """
-    <h2>Login POS Óptica</h2>
-    <form method="post">
-        <input name="usuario" placeholder="Usuario"><br><br>
-        <input name="password" type="password" placeholder="Contraseña"><br><br>
-        <button>Entrar</button>
-    </form>
+/* ===== LAYOUT ===== */
+.container {
+    display: flex;
+    padding: 15px;
+    gap: 15px;
+}
+
+/* LEFT */
+.left {
+    width: 70%;
+    background: white;
+    padding: 15px;
+    border-radius: 8px;
+}
+
+/* RIGHT */
+.right {
+    width: 30%;
+    background: #E5E7EB;
+    padding: 15px;
+    border-radius: 8px;
+}
+
+/* CLIENT */
+.client-box input {
+    width: 100%;
+    padding: 10px;
+    margin-bottom: 8px;
+}
+
+.btn {
+    padding: 10px;
+    border: none;
+    cursor: pointer;
+    border-radius: 6px;
+    font-weight: bold;
+}
+
+.btn-blue { background: #1F4FD8; color: white; }
+.btn-light { background: #60A5FA; color: white; }
+.btn-green { background: #22C55E; color: white; }
+.btn-red { background: #EF4444; color: white; }
+.btn-gray { background: #D1D5DB; }
+
+/* TABLE */
+table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 10px;
+}
+
+th, td {
+    padding: 8px;
+    border-bottom: 1px solid #E5E7EB;
+    text-align: center;
+}
+
+/* TOTALS */
+.totals {
+    margin-top: 20px;
+    background: #F9FAFB;
+    padding: 10px;
+    border-radius: 6px;
+}
+
+.totals h3 {
+    margin: 5px 0;
+}
+</style>
+</head>
+
+<body>
+
+<div class="topbar">
+    <div class="logo">👓 ÓPTICA DEMO <span>Sistema POS</span></div>
+    <div>Caja: <b>CERRADA</b></div>
+</div>
+
+<div class="container">
+
+    <!-- LEFT PANEL -->
+    <div class="left">
+
+        <div class="client-box">
+            <input placeholder="Cliente">
+            <button class="btn btn-light">Buscar cliente</button>
+            <button class="btn btn-blue">Agregar cliente</button>
+        </div>
+
+        <input placeholder="Buscar producto por nombre o SKU">
+
+        <table>
+            <tr>
+                <th>SKU</th>
+                <th>Producto</th>
+                <th>Cantidad</th>
+                <th>Descuento</th>
+                <th>Total</th>
+            </tr>
+            <tr>
+                <td>001</td>
+                <td>Armazón básico</td>
+                <td>1</td>
+                <td>0%</td>
+                <td>$800</td>
+            </tr>
+        </table>
+
+        <div class="totals">
+            <h3>Subtotal: $800</h3>
+            <h3>IVA: $128</h3>
+            <h2>Total: $928</h2>
+        </div>
+
+    </div>
+
+    <!-- RIGHT PANEL -->
+    <div class="right">
+        <button class="btn btn-gray" style="width:100%">Agregar producto</button><br><br>
+        <button class="btn btn-gray" style="width:100%">Editar producto</button><br><br>
+        <button class="btn btn-gray" style="width:100%">Documentos cliente</button><br><br>
+        <button class="btn btn-green" style="width:100%">Guardar venta</button><br><br>
+        <button class="btn btn-red" style="width:100%">Cancelar</button>
+    </div>
+
+</div>
+
+</body>
+</html>
     """
 
-@app.route("/logout")
-def logout():
-    session.clear()
-    return redirect("/")
-
-# ======================
-# DASHBOARD
-# ======================
-@app.route("/dashboard")
-def dashboard():
-    if "usuario" not in session:
-        return redirect("/")
-
-    return """
-    <h1>Dashboard POS Óptica</h1>
-    <ul>
-        <li><a href="/clientes">👤 Clientes</a></li>
-        <li><a href="/logout">Salir</a></li>
-    </ul>
-    """
-
-# ======================
-# CLIENTES
-# ======================
-@app.route("/clientes")
-def clientes():
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute("SELECT id, nombre FROM clientes ORDER BY nombre")
-    data = cur.fetchall()
-    cur.close()
-    conn.close()
-
-    html = "<h2>Clientes</h2><ul>"
-    for c in data:
-        html += f"<li>{c[1]} - <a href='/cliente/{c[0]}'>Ver</a></li>"
-    html += "</ul><br><a href='/dashboard'>Volver</a>"
-    return html
-
-# ======================
-# VER CLIENTE
-# ======================
-@app.route("/cliente/<int:cliente_id>")
-def cliente(cliente_id):
-    conn = get_db()
-    cur = conn.cursor()
-
-    cur.execute(
-        "SELECT nombre, telefono, email FROM clientes WHERE id=%s",
-        (cliente_id,)
-    )
-    cliente = cur.fetchone()
-
-    cur.execute(
-        """
-        SELECT id, nombre_archivo
-        FROM documentos_cliente
-        WHERE cliente_id=%s
-        ORDER BY fecha DESC
-        """,
-        (cliente_id,)
-    )
-    docs = cur.fetchall()
-
-    cur.close()
-    conn.close()
-
-    html = f"""
-    <h2>{cliente[0]}</h2>
-    <p>Teléfono: {cliente[1]}</p>
-    <p>Email: {cliente[2]}</p>
-
-    <h3>Documentos</h3>
-    <ul>
-    """
-
-    for d in docs:
-        html += f"<li>{d[1]} - <a href='/descargar/{d[0]}'>Descargar</a></li>"
-
-    html += f"""
-    </ul>
-
-    <h3>Subir PDF</h3>
-    <form method="post" action="/subir_pdf" enctype="multipart/form-data">
-        <input type="hidden" name="cliente_id" value="{cliente_id}">
-        <input type="file" name="archivo" accept="application/pdf" required>
-        <br><br>
-        <button>Subir</button>
-    </form>
-
-    <br><a href="/clientes">Volver</a>
-    """
-
-    return html
-
-# ======================
-# SUBIR PDF (A BD)
-# ======================
-@app.route("/subir_pdf", methods=["POST"])
-def subir_pdf():
-    cliente_id = request.form["cliente_id"]
-    archivo = request.files["archivo"]
-
-    if not archivo or archivo.filename == "":
-        return "Archivo inválido"
-
-    nombre = secure_filename(archivo.filename)
-    data = archivo.read()
-
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute(
-        """
-        INSERT INTO documentos_cliente
-        (cliente_id, nombre_archivo, archivo)
-        VALUES (%s,%s,%s)
-        """,
-        (cliente_id, nombre, data)
-    )
-    conn.commit()
-    cur.close()
-    conn.close()
-
-    return redirect(f"/cliente/{cliente_id}")
-
-# ======================
-# DESCARGAR PDF
-# ======================
-@app.route("/descargar/<int:doc_id>")
-def descargar(doc_id):
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute(
-        "SELECT nombre_archivo, archivo FROM documentos_cliente WHERE id=%s",
-        (doc_id,)
-    )
-    doc = cur.fetchone()
-    cur.close()
-    conn.close()
-
-    if not doc:
-        return "Documento no encontrado"
-
-    nombre, data = doc
-
-    return Response(
-        data,
-        mimetype="application/pdf",
-        headers={
-            "Content-Disposition": f"attachment; filename={nombre}"
-        }
-    )
-
-# ======================
-# RUN
-# ======================
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
+    app.run(debug=True)
