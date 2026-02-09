@@ -1,6 +1,10 @@
 import os
 import psycopg
-from flask import Flask, request, redirect, url_for, session
+from flask import (
+    Flask, request, redirect, url_for,
+    session, send_from_directory
+)
+from werkzeug.utils import secure_filename
 
 # ======================
 # CONFIG
@@ -9,6 +13,11 @@ app = Flask(__name__)
 app.secret_key = "pos_optica_v1"
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
+
+UPLOAD_FOLDER = "uploads"
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
+
 
 def get_db():
     return psycopg.connect(DATABASE_URL)
@@ -291,7 +300,7 @@ def inventario():
     return html
 
 # ======================
-# CLIENTES
+# CLIENTES + PDFs
 # ======================
 @app.route("/clientes")
 def clientes():
@@ -343,21 +352,101 @@ def cliente_nuevo():
 def cliente(cliente_id):
     conn = get_db()
     cur = conn.cursor()
+
     cur.execute(
         "SELECT nombre, telefono, email FROM clientes WHERE id=%s",
         (cliente_id,)
     )
-    c = cur.fetchone()
+    cli = cur.fetchone()
+
+    cur.execute(
+        """
+        SELECT id, nombre_archivo
+        FROM documentos_cliente
+        WHERE cliente_id=%s
+        ORDER BY fecha DESC
+        """,
+        (cliente_id,)
+    )
+    docs = cur.fetchall()
+
     cur.close()
     conn.close()
 
-    return f"""
+    html = f"""
     <h2>Cliente</h2>
-    <p><b>Nombre:</b> {c[0]}</p>
-    <p><b>Teléfono:</b> {c[1]}</p>
-    <p><b>Email:</b> {c[2]}</p>
+    <p><b>Nombre:</b> {cli[0]}</p>
+    <p><b>Teléfono:</b> {cli[1]}</p>
+    <p><b>Email:</b> {cli[2]}</p>
+
+    <h3>Documentos</h3>
+    <ul>
+    """
+    for d in docs:
+        html += f"<li>{d[1]} - <a href='/descargar/{d[0]}'>Descargar</a></li>"
+    html += """
+    </ul>
+
+    <h3>Subir PDF</h3>
+    <form method="post" action="/subir_pdf" enctype="multipart/form-data">
+        <input type="hidden" name="cliente_id" value="{cliente_id}">
+        <input type="file" name="archivo" accept="application/pdf" required>
+        <br><br>
+        <button>Subir</button>
+    </form>
+
     <br><a href="/clientes">Volver</a>
     """
+    return html
+
+@app.route("/subir_pdf", methods=["POST"])
+def subir_pdf():
+    cliente_id = request.form["cliente_id"]
+    archivo = request.files["archivo"]
+
+    if not archivo or archivo.filename == "":
+        return "Archivo inválido"
+
+    nombre = secure_filename(archivo.filename)
+    ruta = os.path.join(app.config["UPLOAD_FOLDER"], nombre)
+    archivo.save(ruta)
+
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        INSERT INTO documentos_cliente
+        (cliente_id, nombre_archivo, ruta_archivo)
+        VALUES (%s,%s,%s)
+        """,
+        (cliente_id, nombre, ruta)
+    )
+    conn.commit()
+    cur.close()
+    conn.close()
+
+    return redirect(url_for("cliente", cliente_id=cliente_id))
+
+@app.route("/descargar/<int:doc_id>")
+def descargar(doc_id):
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT nombre_archivo FROM documentos_cliente WHERE id=%s",
+        (doc_id,)
+    )
+    doc = cur.fetchone()
+    cur.close()
+    conn.close()
+
+    if not doc:
+        return "Documento no encontrado"
+
+    return send_from_directory(
+        app.config["UPLOAD_FOLDER"],
+        doc[0],
+        as_attachment=True
+    )
 
 # ======================
 # RUN
