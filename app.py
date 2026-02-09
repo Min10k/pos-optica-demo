@@ -2,20 +2,18 @@ import os
 import psycopg
 from flask import Flask, request, redirect, url_for, session
 
-# ======================
-# CONFIG
-# ======================
 app = Flask(__name__)
 app.secret_key = "pos_optica_v1"
 
-DATABASE_URL = os.environ.get("DATABASE_URL").strip()
+DATABASE_URL = os.environ.get("DATABASE_URL")
+if not DATABASE_URL:
+    raise RuntimeError("DATABASE_URL no definida")
+
+DATABASE_URL = DATABASE_URL.strip()
 
 def get_db():
     return psycopg.connect(DATABASE_URL)
 
-# ======================
-# USUARIOS DEMO
-# ======================
 USUARIOS = {
     "admin": {"password": "admin123", "rol": "admin"},
     "caja": {"password": "caja123", "rol": "caja"}
@@ -27,8 +25,8 @@ USUARIOS = {
 @app.route("/", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
-        u = request.form["usuario"]
-        p = request.form["password"]
+        u = request.form.get("usuario")
+        p = request.form.get("password")
 
         if u in USUARIOS and USUARIOS[u]["password"] == p:
             session.clear()
@@ -68,7 +66,7 @@ def dashboard():
     estado = "🟢 Caja ABIERTA" if caja else "🔴 Caja CERRADA"
 
     return f"""
-    <h1>Dashboard POS Óptica</h1>
+    <h1>Dashboard</h1>
     <p>{estado}</p>
     <a href="/abrir_caja">Abrir caja</a><br>
     <a href="/pos">POS</a><br>
@@ -82,13 +80,17 @@ def dashboard():
 @app.route("/abrir_caja", methods=["GET", "POST"])
 def abrir_caja():
     if request.method == "POST":
-        monto = request.form["monto"]
+        monto = request.form.get("monto")
+        if not monto:
+            return "Monto inválido"
 
         conn = get_db()
         cur = conn.cursor()
         cur.execute("SELECT id FROM caja WHERE cerrada = FALSE")
         if cur.fetchone():
-            return "Ya hay una caja abierta"
+            cur.close()
+            conn.close()
+            return "Ya hay caja abierta"
 
         cur.execute("INSERT INTO caja (monto_inicial) VALUES (%s)", (monto,))
         conn.commit()
@@ -105,12 +107,12 @@ def abrir_caja():
     """
 
 # ======================
-# POS (ESTABLE)
+# POS (ULTRA ESTABLE)
 # ======================
 @app.route("/pos", methods=["GET", "POST"])
 def pos():
-    # 🔐 asegurar carrito siempre
-    if "carrito" not in session:
+    # 🔐 asegurar carrito SIEMPRE
+    if "carrito" not in session or not isinstance(session["carrito"], list):
         session["carrito"] = []
 
     conn = get_db()
@@ -119,33 +121,48 @@ def pos():
     cur.execute("SELECT id FROM caja WHERE cerrada = FALSE LIMIT 1")
     caja = cur.fetchone()
     if not caja:
+        cur.close()
+        conn.close()
         return "No hay caja abierta<br><a href='/dashboard'>Volver</a>"
 
-    # POST → agregar producto
+    mensaje = ""
+
     if request.method == "POST":
-        pid = int(request.form["producto"])
-        cantidad = int(request.form["cantidad"])
+        try:
+            pid = request.form.get("producto")
+            cantidad = request.form.get("cantidad")
 
-        cur.execute(
-            "SELECT nombre, precio, stock FROM productos WHERE id=%s",
-            (pid,)
-        )
-        prod = cur.fetchone()
+            if not pid or not cantidad:
+                mensaje = "Datos incompletos"
+            else:
+                pid = int(pid)
+                cantidad = int(cantidad)
 
-        if not prod or cantidad > prod[2]:
-            return "Stock insuficiente<br><a href='/pos'>Volver</a>"
+                cur.execute(
+                    "SELECT nombre, precio, stock FROM productos WHERE id=%s",
+                    (pid,)
+                )
+                prod = cur.fetchone()
 
-        session["carrito"].append({
-            "id": pid,
-            "nombre": prod[0],
-            "precio": prod[1],
-            "cantidad": cantidad
-        })
-        session.modified = True
+                if not prod:
+                    mensaje = "Producto no encontrado"
+                elif cantidad <= 0:
+                    mensaje = "Cantidad inválida"
+                elif cantidad > prod[2]:
+                    mensaje = "Stock insuficiente"
+                else:
+                    session["carrito"].append({
+                        "id": pid,
+                        "nombre": prod[0],
+                        "precio": prod[1],
+                        "cantidad": cantidad
+                    })
+                    session.modified = True
+                    return redirect(url_for("pos"))
 
-        return redirect(url_for("pos"))  # PRG FIX
+        except Exception as e:
+            mensaje = f"Error al agregar producto: {str(e)}"
 
-    # GET → render
     cur.execute("SELECT id, nombre, precio, stock FROM productos ORDER BY nombre")
     productos = cur.fetchall()
     cur.close()
@@ -164,6 +181,7 @@ def pos():
 
     return f"""
     <h2>POS</h2>
+    <p style="color:red;">{mensaje}</p>
 
     <form method="post">
         <select name="producto">{options}</select>
@@ -189,10 +207,15 @@ def pagar():
 
     conn = get_db()
     cur = conn.cursor()
-
     cur.execute("SELECT id FROM caja WHERE cerrada = FALSE LIMIT 1")
-    caja_id = cur.fetchone()[0]
+    caja = cur.fetchone()
 
+    if not caja:
+        cur.close()
+        conn.close()
+        return "No hay caja abierta"
+
+    caja_id = caja[0]
     total = sum(i["precio"] * i["cantidad"] for i in session["carrito"])
 
     cur.execute(
@@ -214,11 +237,10 @@ def pagar():
     conn.commit()
     cur.close()
     conn.close()
-
     session["carrito"] = []
 
     return f"""
-    <h2>Venta realizada con éxito</h2>
+    <h2>Venta realizada</h2>
     <p>Total: ${total}</p>
     <a href="/pos">Nueva venta</a><br>
     <a href="/dashboard">Dashboard</a>
@@ -235,6 +257,8 @@ def cerrar_caja():
     cur.execute("SELECT id, monto_inicial FROM caja WHERE cerrada = FALSE LIMIT 1")
     caja = cur.fetchone()
     if not caja:
+        cur.close()
+        conn.close()
         return "No hay caja abierta"
 
     caja_id, monto = caja
