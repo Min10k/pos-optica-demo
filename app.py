@@ -1,6 +1,9 @@
 import os
 import psycopg
-from flask import Flask, session, redirect, url_for
+from flask import (
+    Flask, session, redirect, url_for,
+    request
+)
 
 # ======================
 # CONFIG
@@ -26,8 +29,6 @@ USUARIOS = {
 # ======================
 @app.route("/", methods=["GET", "POST"])
 def login():
-    from flask import request
-
     if request.method == "POST":
         u = request.form["usuario"]
         p = request.form["password"]
@@ -57,30 +58,55 @@ def login():
     """
 
 # ======================
-# POS (SOLO LECTURA)
+# POS + VENTA
 # ======================
-@app.route("/pos")
+@app.route("/pos", methods=["GET", "POST"])
 def pos():
     if "usuario" not in session:
         return redirect(url_for("login"))
 
     conn = get_db()
     cur = conn.cursor()
-    cur.execute("SELECT nombre, precio, stock FROM productos ORDER BY nombre")
+    cur.execute("SELECT id, nombre, precio FROM productos ORDER BY nombre")
     productos = cur.fetchall()
-    cur.close()
-    conn.close()
+
+    mensaje = ""
+
+    if request.method == "POST":
+        total = 0
+
+        for p in productos:
+            cantidad = request.form.get(f"prod_{p[0]}")
+            if cantidad:
+                cantidad = int(cantidad)
+                if cantidad > 0:
+                    subtotal = cantidad * float(p[2])
+                    total += subtotal
+
+        if total > 0:
+            cur.execute(
+                "INSERT INTO ventas (total, usuario) VALUES (%s, %s)",
+                (total, session["usuario"])
+            )
+            conn.commit()
+            mensaje = f"<h3 style='color:green'>Venta realizada — Total ${total}</h3>"
+        else:
+            mensaje = "<h3 style='color:red'>No se seleccionaron productos</h3>"
 
     filas = ""
     for p in productos:
         filas += f"""
         <tr>
-            <td>{p[0]}</td>
-            <td>${p[1]}</td>
-            <td>{p[2]}</td>
-            <td><input type="number" value="1" min="1" style="width:60px"></td>
+            <td>{p[1]}</td>
+            <td>${p[2]}</td>
+            <td>
+                <input type="number" name="prod_{p[0]}" min="0" value="0" style="width:70px">
+            </td>
         </tr>
         """
+
+    cur.close()
+    conn.close()
 
     return f"""
     <style>
@@ -88,12 +114,10 @@ def pos():
         header{{background:#1F4FD8;color:white;padding:15px}}
         main{{padding:20px}}
         table{{width:100%;border-collapse:collapse;background:white}}
-        th,td{{padding:10px;border-bottom:1px solid #ddd;text-align:left}}
+        th,td{{padding:10px;border-bottom:1px solid #ddd}}
         th{{background:#E5E7EB}}
-        .right{{text-align:right}}
         .btn{{padding:10px 15px;border:none;border-radius:5px}}
         .btn-green{{background:#22C55E;color:white}}
-        .btn-red{{background:#EF4444;color:white}}
         footer{{margin-top:20px;text-align:right}}
     </style>
 
@@ -103,22 +127,22 @@ def pos():
     </header>
 
     <main>
-        <h3>Productos</h3>
+        {mensaje}
 
-        <table>
-            <tr>
-                <th>Producto</th>
-                <th>Precio</th>
-                <th>Stock</th>
-                <th>Cantidad</th>
-            </tr>
-            {filas}
-        </table>
+        <form method="post">
+            <table>
+                <tr>
+                    <th>Producto</th>
+                    <th>Precio</th>
+                    <th>Cantidad</th>
+                </tr>
+                {filas}
+            </table>
 
-        <footer>
-            <button class="btn btn-green">Pagar (demo)</button>
-            <button class="btn btn-red">Cancelar</button>
-        </footer>
+            <footer>
+                <button class="btn btn-green">Cobrar</button>
+            </footer>
+        </form>
     </main>
     """
 
