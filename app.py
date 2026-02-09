@@ -1,180 +1,138 @@
-from flask import Flask
+import os
+import psycopg
+from flask import Flask, session, redirect, url_for
 
+# ======================
+# CONFIG
+# ======================
 app = Flask(__name__)
+app.secret_key = "pos_optica_demo"
 
-@app.route("/")
-def home():
+DATABASE_URL = os.environ.get("DATABASE_URL")
+
+def get_db():
+    return psycopg.connect(DATABASE_URL)
+
+# ======================
+# LOGIN DEMO
+# ======================
+USUARIOS = {
+    "admin": "admin123",
+    "caja": "caja123"
+}
+
+# ======================
+# LOGIN
+# ======================
+@app.route("/", methods=["GET", "POST"])
+def login():
+    from flask import request
+
+    if request.method == "POST":
+        u = request.form["usuario"]
+        p = request.form["password"]
+
+        if u in USUARIOS and USUARIOS[u] == p:
+            session["usuario"] = u
+            return redirect(url_for("pos"))
+
+        return "<h3>Credenciales incorrectas</h3>"
+
     return """
-    <h2>POS Óptica Demo</h2>
-    <a href="/pos">Entrar al POS</a>
+    <style>
+        body{font-family:Arial;background:#F4F6F8;display:flex;justify-content:center;align-items:center;height:100vh}
+        .box{background:white;padding:30px;border-radius:8px;width:300px}
+        input,button{width:100%;padding:10px;margin-top:10px}
+        button{background:#1F4FD8;color:white;border:none}
+    </style>
+
+    <div class="box">
+        <h2>👓 Óptica Demo</h2>
+        <form method="post">
+            <input name="usuario" placeholder="Usuario">
+            <input name="password" type="password" placeholder="Contraseña">
+            <button>Entrar</button>
+        </form>
+    </div>
     """
 
+# ======================
+# POS (SOLO LECTURA)
+# ======================
 @app.route("/pos")
 def pos():
-    return """
-<!DOCTYPE html>
-<html lang="es">
-<head>
-<meta charset="UTF-8">
-<title>POS Óptica</title>
+    if "usuario" not in session:
+        return redirect(url_for("login"))
 
-<style>
-body {
-    margin: 0;
-    font-family: Arial, Helvetica, sans-serif;
-    background: #F4F6F8;
-}
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("SELECT nombre, precio, stock FROM productos ORDER BY nombre")
+    productos = cur.fetchall()
+    cur.close()
+    conn.close()
 
-/* ===== TOP BAR ===== */
-.topbar {
-    background: #1F4FD8;
-    color: white;
-    padding: 12px 20px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-}
+    filas = ""
+    for p in productos:
+        filas += f"""
+        <tr>
+            <td>{p[0]}</td>
+            <td>${p[1]}</td>
+            <td>{p[2]}</td>
+            <td><input type="number" value="1" min="1" style="width:60px"></td>
+        </tr>
+        """
 
-.logo {
-    font-size: 20px;
-    font-weight: bold;
-}
+    return f"""
+    <style>
+        body{{font-family:Arial;background:#F4F6F8;margin:0}}
+        header{{background:#1F4FD8;color:white;padding:15px}}
+        main{{padding:20px}}
+        table{{width:100%;border-collapse:collapse;background:white}}
+        th,td{{padding:10px;border-bottom:1px solid #ddd;text-align:left}}
+        th{{background:#E5E7EB}}
+        .right{{text-align:right}}
+        .btn{{padding:10px 15px;border:none;border-radius:5px}}
+        .btn-green{{background:#22C55E;color:white}}
+        .btn-red{{background:#EF4444;color:white}}
+        footer{{margin-top:20px;text-align:right}}
+    </style>
 
-.logo span {
-    font-size: 14px;
-    color: #D1D5DB;
-}
+    <header>
+        <h2>👓 ÓPTICA DEMO — POS</h2>
+        <small>Usuario: {session['usuario']}</small>
+    </header>
 
-/* ===== LAYOUT ===== */
-.container {
-    display: flex;
-    padding: 15px;
-    gap: 15px;
-}
-
-/* LEFT */
-.left {
-    width: 70%;
-    background: white;
-    padding: 15px;
-    border-radius: 8px;
-}
-
-/* RIGHT */
-.right {
-    width: 30%;
-    background: #E5E7EB;
-    padding: 15px;
-    border-radius: 8px;
-}
-
-/* CLIENT */
-.client-box input {
-    width: 100%;
-    padding: 10px;
-    margin-bottom: 8px;
-}
-
-.btn {
-    padding: 10px;
-    border: none;
-    cursor: pointer;
-    border-radius: 6px;
-    font-weight: bold;
-}
-
-.btn-blue { background: #1F4FD8; color: white; }
-.btn-light { background: #60A5FA; color: white; }
-.btn-green { background: #22C55E; color: white; }
-.btn-red { background: #EF4444; color: white; }
-.btn-gray { background: #D1D5DB; }
-
-/* TABLE */
-table {
-    width: 100%;
-    border-collapse: collapse;
-    margin-top: 10px;
-}
-
-th, td {
-    padding: 8px;
-    border-bottom: 1px solid #E5E7EB;
-    text-align: center;
-}
-
-/* TOTALS */
-.totals {
-    margin-top: 20px;
-    background: #F9FAFB;
-    padding: 10px;
-    border-radius: 6px;
-}
-
-.totals h3 {
-    margin: 5px 0;
-}
-</style>
-</head>
-
-<body>
-
-<div class="topbar">
-    <div class="logo">👓 ÓPTICA DEMO <span>Sistema POS</span></div>
-    <div>Caja: <b>CERRADA</b></div>
-</div>
-
-<div class="container">
-
-    <!-- LEFT PANEL -->
-    <div class="left">
-
-        <div class="client-box">
-            <input placeholder="Cliente">
-            <button class="btn btn-light">Buscar cliente</button>
-            <button class="btn btn-blue">Agregar cliente</button>
-        </div>
-
-        <input placeholder="Buscar producto por nombre o SKU">
+    <main>
+        <h3>Productos</h3>
 
         <table>
             <tr>
-                <th>SKU</th>
                 <th>Producto</th>
+                <th>Precio</th>
+                <th>Stock</th>
                 <th>Cantidad</th>
-                <th>Descuento</th>
-                <th>Total</th>
             </tr>
-            <tr>
-                <td>001</td>
-                <td>Armazón básico</td>
-                <td>1</td>
-                <td>0%</td>
-                <td>$800</td>
-            </tr>
+            {filas}
         </table>
 
-        <div class="totals">
-            <h3>Subtotal: $800</h3>
-            <h3>IVA: $128</h3>
-            <h2>Total: $928</h2>
-        </div>
-
-    </div>
-
-    <!-- RIGHT PANEL -->
-    <div class="right">
-        <button class="btn btn-gray" style="width:100%">Agregar producto</button><br><br>
-        <button class="btn btn-gray" style="width:100%">Editar producto</button><br><br>
-        <button class="btn btn-gray" style="width:100%">Documentos cliente</button><br><br>
-        <button class="btn btn-green" style="width:100%">Guardar venta</button><br><br>
-        <button class="btn btn-red" style="width:100%">Cancelar</button>
-    </div>
-
-</div>
-
-</body>
-</html>
+        <footer>
+            <button class="btn btn-green">Pagar (demo)</button>
+            <button class="btn btn-red">Cancelar</button>
+        </footer>
+    </main>
     """
 
+# ======================
+# LOGOUT
+# ======================
+@app.route("/logout")
+def logout():
+    session.clear()
+    return redirect(url_for("login"))
+
+# ======================
+# RUN
+# ======================
 if __name__ == "__main__":
-    app.run(debug=True)
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
