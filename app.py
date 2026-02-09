@@ -1,4 +1,3 @@
-
 import os
 import psycopg
 from flask import Flask, request, redirect, url_for, session
@@ -79,6 +78,7 @@ def dashboard():
     <a href="/abrir_caja">Abrir caja</a><br><br>
     <a href="/pos">POS / Ventas</a><br><br>
     <a href="/inventario">Inventario</a><br><br>
+    <a href="/clientes">Clientes</a><br><br>
     <a href="/cerrar_caja">Cerrar caja</a><br><br>
     <a href="/logout">Salir</a>
     """
@@ -289,6 +289,75 @@ def inventario():
         html += f"<li>{p[0]} - ${p[1]} | Stock: {p[2]}</li>"
     html += "</ul><br><a href='/dashboard'>Volver</a>"
     return html
+
+# ======================
+# CLIENTES
+# ======================
+@app.route("/clientes")
+def clientes():
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("SELECT id, nombre FROM clientes ORDER BY nombre")
+    clientes = cur.fetchall()
+    cur.close()
+    conn.close()
+
+    html = "<h2>Clientes</h2>"
+    html += "<a href='/cliente_nuevo'>+ Nuevo cliente</a><br><br><ul>"
+    for c in clientes:
+        html += f"<li>{c[1]} - <a href='/cliente/{c[0]}'>Ver</a></li>"
+    html += "</ul><br><a href='/dashboard'>Volver</a>"
+    return html
+
+@app.route("/cliente_nuevo", methods=["GET", "POST"])
+def cliente_nuevo():
+    if request.method == "POST":
+        nombre = request.form["nombre"]
+        telefono = request.form["telefono"]
+        email = request.form["email"]
+
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO clientes (nombre, telefono, email) VALUES (%s,%s,%s)",
+            (nombre, telefono, email)
+        )
+        conn.commit()
+        cur.close()
+        conn.close()
+
+        return redirect(url_for("clientes"))
+
+    return """
+    <h2>Nuevo cliente</h2>
+    <form method="post">
+        <input name="nombre" placeholder="Nombre" required><br><br>
+        <input name="telefono" placeholder="Teléfono"><br><br>
+        <input name="email" placeholder="Email"><br><br>
+        <button>Guardar</button>
+    </form>
+    <br><a href="/clientes">Volver</a>
+    """
+
+@app.route("/cliente/<int:cliente_id>")
+def cliente(cliente_id):
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT nombre, telefono, email FROM clientes WHERE id=%s",
+        (cliente_id,)
+    )
+    c = cur.fetchone()
+    cur.close()
+    conn.close()
+
+    return f"""
+    <h2>Cliente</h2>
+    <p><b>Nombre:</b> {c[0]}</p>
+    <p><b>Teléfono:</b> {c[1]}</p>
+    <p><b>Email:</b> {c[2]}</p>
+    <br><a href="/clientes">Volver</a>
+    """
 
 # ======================
 # RUN
