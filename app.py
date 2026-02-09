@@ -151,12 +151,13 @@ def pos():
                 elif cantidad > prod[2]:
                     mensaje = "Stock insuficiente"
                 else:
-                    session["carrito"].append({
-                        "id": pid,
-                        "nombre": prod[0],
-                        "precio": prod[1],
-                        "cantidad": cantidad
-                    })
+                   session["carrito"].append({
+    "id": pid,
+    "nombre": prod[0],
+    "precio": float(prod[1]),  # 🔥 FIX
+    "cantidad": cantidad
+})
+
                     session.modified = True
                     return redirect(url_for("pos"))
 
